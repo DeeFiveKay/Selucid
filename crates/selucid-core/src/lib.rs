@@ -10,6 +10,7 @@ pub mod avc;
 pub mod booleans;
 pub mod container;
 pub mod grouping;
+pub mod history;
 pub mod inspect;
 pub mod inference;
 pub mod parser;
@@ -24,6 +25,7 @@ pub use container::{
     mount_flag_suspected,
 };
 pub use grouping::{extract_avc_events, group_by_serial};
+pub use history::{HistoryEntry, RollbackPlan, capture_after, capture_before, history_file, list_entries, new_entry, record, rollback_plan, state_dir};
 pub use inspect::{ContextMismatch, InspectionReport, MismatchKind, actual_context, compare_context, inspect_directory};
 pub use inference::{
     Confidence, Diagnosis, FixKind, SuggestedFix, boolean_hint_for, diagnose, diagnose_with_oracle,

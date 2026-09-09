@@ -62,6 +62,57 @@ impl PrivilegedAction {
             })
         }
     }
+
+    /// Execute and journal the attempt: captures the observable before/after
+    /// state and appends a [`crate::history::HistoryEntry`] no matter how the
+    /// command ends. Journaling failures stay non-fatal (best-effort audit).
+    pub fn execute_journaled(&self) -> Result<(String, crate::history::HistoryEntry), PrivilegeError> {
+        let argv: Vec<String> = self
+            .argv
+            .iter()
+            .map(|s| s.to_string_lossy().into_owned())
+            .collect();
+        let before = crate::history::capture_before(self.action_id, &argv);
+        match self.execute() {
+            Ok(out) => {
+                let after = crate::history::capture_after(self.action_id, &argv);
+                let entry = crate::history::new_entry(
+                    self.action_id,
+                    &argv,
+                    before,
+                    after,
+                    true,
+                    excerpt_of(&out),
+                );
+                let _ = crate::history::record(&entry);
+                Ok((out, entry))
+            }
+            Err(e) => {
+                let entry = crate::history::new_entry(
+                    self.action_id,
+                    &argv,
+                    before,
+                    None,
+                    false,
+                    None,
+                );
+                let _ = crate::history::record(&entry);
+                Err(e)
+            }
+        }
+    }
+}
+
+/// First ~200 chars of a command's stdout, trimmed, for the journal.
+fn excerpt_of(output: &str) -> Option<String> {
+    let trimmed = output.trim();
+    if trimmed.is_empty() {
+        None
+    } else if trimmed.len() > 200 {
+        Some(format!("{}…", &trimmed[..200]))
+    } else {
+        Some(trimmed.to_string())
+    }
 }
 
 pub fn restorecon_action(path: &str) -> PrivilegedAction {
