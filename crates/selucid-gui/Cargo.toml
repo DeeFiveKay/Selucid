@@ -1,0 +1,20 @@
+[package]
+name = "selucid-gui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Selucid GTK4/Libadwaita desktop app (needs gtk4-devel, libadwaita-devel)"
+
+[[bin]]
+name = "selucid-gui"
+path = "src/main.rs"
+
+[dependencies]
+selucid-core.workspace = true
+# GUI dependencies are intentionally commented out until the GTK4
+# -devel packages are installed on the build host. Uncomment and run
+# `cargo build -p selucid-gui` after `dnf install gtk4-devel libadwaita-devel`.
+# relm4 = "0.11"
+# gtk = "0.10"
+# libadwaita = "0.7"
+# tokio = { version = "1", features = ["full"] }

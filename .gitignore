@@ -1,0 +1,17 @@
+# Rust
+/target/
+Cargo.lock
+**/*.rs.bk
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Build artifacts
+*.pp
+*.te
+selucid_fix_*
+/dist/

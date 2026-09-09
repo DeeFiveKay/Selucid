@@ -1,0 +1,16 @@
+[package]
+name = "selucid-tui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Selucid terminal UI for headless servers and SSH sessions"
+
+[[bin]]
+name = "selucid-tui"
+path = "src/main.rs"
+
+[dependencies]
+selucid-core.workspace = true
+ratatui.workspace = true
+crossterm.workspace = true
+tokio.workspace = true

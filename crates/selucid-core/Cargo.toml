@@ -1,0 +1,18 @@
+[package]
+name = "selucid-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Core AVC parsing, grouping, and fix-inference engine for Selucid"
+
+[dependencies]
+nom.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+notify.workspace = true
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }
+tempfile = "3"

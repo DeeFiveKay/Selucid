@@ -1,0 +1,38 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/selucid-core",
+    "crates/selucid-cli",
+    "crates/selucid-tui",
+    "crates/selucid-gui",
+]
+# The GUI needs system GTK4/Libadwaita -devel packages; it is excluded from
+# the default build so servers and CI without GNOME dev headers still work.
+# Build it explicitly with: cargo build -p selucid-gui
+default-members = [
+    "crates/selucid-core",
+    "crates/selucid-cli",
+    "crates/selucid-tui",
+]
+
+[workspace.package]
+edition = "2024"
+version = "0.1.0"
+license = "GPL-3.0-or-later"
+authors = ["Selucid Contributors"]
+repository = "https://github.com/selucid/selucid"
+homepage = "https://github.com/selucid/selucid"
+description = "SELinux AVC visualizer and troubleshooting toolkit"
+rust-version = "1.85"
+
+[workspace.dependencies]
+selucid-core = { path = "crates/selucid-core", version = "0.1.0" }
+nom = "8"
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+notify = "8"
+clap = { version = "4", features = ["derive"] }
+ratatui = "0.30"
+crossterm = "0.29"

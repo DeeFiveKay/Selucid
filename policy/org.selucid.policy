@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+  "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<policyconfig>
+  <vendor>Selucid</vendor>
+  <vendor_url>https://github.com/selucid/selucid</vendor_url>
+
+  <action id="org.selucid.restorecon">
+    <description>Restore SELinux file contexts</description>
+    <message>Authentication is required to restore SELinux file contexts</message>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+  </action>
+
+  <action id="org.selucid.setboolean">
+    <description>Toggle an SELinux boolean</description>
+    <message>Authentication is required to change an SELinux boolean</message>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+  </action>
+
+  <action id="org.selucid.semanage">
+    <description>Update SELinux file context mappings</description>
+    <message>Authentication is required to update SELinux policy mappings</message>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+  </action>
+
+  <action id="org.selucid.installmodule">
+    <description>Install a local SELinux policy module</description>
+    <message>Authentication is required to install an SELinux policy module</message>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+  </action>
+</policyconfig>
