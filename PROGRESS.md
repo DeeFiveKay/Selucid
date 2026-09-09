@@ -44,7 +44,7 @@ Definition of done (all must hold before publishing):
 - [!] **3. Proactive context inspection** (`src/inspect.rs`)
       Directory walker; per-file `matchpathcon` expected vs actual label
       (`getfattr`), producing a mismatch report (unlabeled / wrong label).
-- [ ] **4. Exporting & reporting** (`src/report.rs`)
+- [!] **4. Exporting & reporting** (`src/report.rs`)
       Denial reports as Markdown, runnable Bash remediation script, and a
       ready-to-run Ansible playbook (PDF deferred — Markdown satisfies the
       plan and avoids a heavy dependency).

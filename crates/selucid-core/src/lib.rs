@@ -15,6 +15,7 @@ pub mod inference;
 pub mod parser;
 pub mod privileged;
 pub mod reader;
+pub mod report;
 
 pub use analysis::{WhyAnalysis, analyze_batch, analyze_raw};
 pub use avc::{AuditRecord, AvcEvent, SelinuxContext};
@@ -29,3 +30,4 @@ pub use inference::{
 };
 pub use parser::{ParseError, parse_audit_line};
 pub use reader::{LogWatcher, WatchEvent};
+pub use report::{ReportFormat, render_ansible, render_bash, render_markdown, render_report};
