@@ -333,10 +333,11 @@ fn fix_to_action(fix: &selucid_core::SuggestedFix) -> selucid_core::privileged::
             let on = parts.next().unwrap_or("1") == "1";
             privrun::setsebool_action(name, on)
         }
-        FixKind::SemanageFcontext | FixKind::PolicyModule => {
+        FixKind::SemanageFcontext | FixKind::PolicyModule | FixKind::ContainerVolume => {
             eprintln!(
                 "This fix is a compound/generated command and cannot run unattended:\n  {}\n\
-                 Review it, then run it manually (with sudo) after checking the .te file where applicable.",
+                 Review it, then apply it manually (for Podman `-v` flags: edit the \
+                 container's run command and restart it).",
                 fix.command
             );
             std::process::exit(2);

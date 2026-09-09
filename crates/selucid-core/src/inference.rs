@@ -17,6 +17,9 @@ pub enum FixKind {
     SemanageFcontext,
     SetBoolean,
     PolicyModule,
+    /// Container bind-mount adjustment (missing `:z`/`:Z` flag). This is
+    /// guidance for the user's `podman run` command, never executed.
+    ContainerVolume,
 }
 
 /// One concrete remediation step.
@@ -124,6 +127,16 @@ pub fn diagnose_with_oracle(
     }
 
     let mut fixes = Vec::new();
+    // Container-aware diagnosis comes first: a missing `:z` volume flag on a
+    // Podman bind mount is the root cause and the narrowest fix when present.
+    if let Some(cfix) = crate::container::container_fix(event) {
+        explanation.push_str(
+            " The source domain is container-like and the target path is \
+             host-labeled through a bind mount — the Podman `-v` flag is \
+             likely missing `:z` (or `:Z`).",
+        );
+        fixes.push(cfix);
+    }
     let confidence;
 
     // Oracle verdict: missing TE rule with no boolean candidates means the

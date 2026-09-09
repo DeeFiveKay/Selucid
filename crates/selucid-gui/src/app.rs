@@ -775,7 +775,7 @@ fn apply_selected(model: &Model) -> Option<String> {
             let on = parts.next().unwrap_or("1") == "1";
             Some(selucid_core::privileged::setsebool_action(name, on))
         }
-        FixKind::SemanageFcontext | FixKind::PolicyModule => None,
+        FixKind::SemanageFcontext | FixKind::PolicyModule | FixKind::ContainerVolume => None,
     };
 
     if let Some(a) = action {
