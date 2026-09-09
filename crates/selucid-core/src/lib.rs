@@ -5,6 +5,7 @@
 //! one diagnostic engine. Nothing in this crate escalates privileges on its
 //! own; see [`privileged`] for the reviewed-command builders.
 
+pub mod anomaly;
 pub mod analysis;
 pub mod avc;
 pub mod booleans;
@@ -19,6 +20,7 @@ pub mod privileged;
 pub mod reader;
 pub mod report;
 
+pub use anomaly::{DenialTracker, Incident, Severity, DEFAULT_THRESHOLD, DEFAULT_WINDOW_SECS};
 pub use analysis::{WhyAnalysis, analyze_batch, analyze_raw};
 pub use avc::{AuditRecord, AvcEvent, SelinuxContext};
 pub use compliance::{CheckStatus, ComplianceCheck, ComplianceReport, run_audit};
