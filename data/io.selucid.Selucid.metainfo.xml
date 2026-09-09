@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop">
+  <id>io.selucid.Selucid</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <name>Selucid</name>
+  <summary>SELinux AVC denial visualizer and troubleshooter</summary>
+  <description>
+    <p>
+      Selucid is an open-source, system-level visualizer and troubleshooting
+      toolkit for RHEL, Fedora, and compatible distributions. It bridges the
+      gap between cryptic SELinux AVC denials and the humans who must fix them.
+    </p>
+    <p>
+      Selucid reads audit log denials, explains them in plain language,
+      cross-checks against the loaded policy via audit2why, and guides the
+      user through narrow, non-destructive fixes — restorecon, setsebool,
+      semanage, or audit2allow module generation — via Polkit authorization.
+    </p>
+    <p>
+      The GTK4/Libadwaita desktop app presents a live denials list, a
+      detail pane with diagnosis and suggested fixes, a searchable booleans
+      explorer, and live tailing of the audit log.
+    </p>
+  </description>
+  <launchable type="desktop-id">io.selucid.Selucid.desktop</launchable>
+  <url type="homepage">https://github.com/selucid/selucid</url>
+  <url type="bugtracker">https://github.com/selucid/selucid/issues</url>
+  <developer_name>Selucid contributors</developer_name>
+  <updated>2026-09-09</updated>
+  <content_rating type="oars-ccc" />
+  <releases>
+    <release version="0.1.0" date="2026-09-09">
+      <description>
+        <p>First public pre-release.</p>
+        <ul>
+          <li>GTK4/Libadwaita desktop app: denials list, detail pane, booleans tab, live tailing.</li>
+          <li>CLI: explain, suggest, watch, why, export, fix, booleans.</li>
+          <li>TUI: full-screen terminal interface with Vim keys.</li>
+          <li>Core: nom parser, grouping, inference, oracle cross-check, privileged pkexec runner.</li>
+        </ul>
+      </description>
+    </release>
+  </releases>
+  <provides>
+    <binary>selucid-gui</binary>
+  </provides>
+</component>

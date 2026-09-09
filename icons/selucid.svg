@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <defs>
+    <linearGradient id="rh-red" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#EE0000"/>
+      <stop offset="100%" stop-color="#B70000"/>
+    </linearGradient>
+  </defs>
+  <!-- Shield -->
+  <path d="M128 24 L232 56 V128 C232 184 184 216 128 232 C72 216 24 184 24 128 V56 Z"
+        fill="url(#rh-red)" stroke="#FFFFFF" stroke-width="6" stroke-linejoin="round"/>
+  <path d="M128 44 L212 68 V126 C212 170 176 200 128 212 C80 200 44 170 44 126 V68 Z"
+        fill="none" stroke="#FFFFFF" stroke-width="3" opacity="0.4"/>
+  <!-- Eye-->
+  <ellipse cx="128" cy="124" rx="36" ry="32" fill="none" stroke="#FFFFFF" stroke-width="6"/>
+  <circle cx="128" cy="124" r="14" fill="#FFFFFF"/>
+  <circle cx="122" cy="118" r="4" fill="#EE0000" opacity="0.7"/>
+</svg>
