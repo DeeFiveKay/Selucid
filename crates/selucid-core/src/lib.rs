@@ -8,6 +8,7 @@
 pub mod analysis;
 pub mod avc;
 pub mod booleans;
+pub mod compliance;
 pub mod container;
 pub mod grouping;
 pub mod history;
@@ -20,6 +21,7 @@ pub mod report;
 
 pub use analysis::{WhyAnalysis, analyze_batch, analyze_raw};
 pub use avc::{AuditRecord, AvcEvent, SelinuxContext};
+pub use compliance::{CheckStatus, ComplianceCheck, ComplianceReport, run_audit};
 pub use container::{
     ContainerEngine, ContainerHint, ContainerIssue, classify, container_fix, is_container_source,
     mount_flag_suspected,
