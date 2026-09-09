@@ -36,10 +36,12 @@ Definition of done (all must hold before publishing):
       Read-only diff before a `setsebool`/`semanage`/`restorecon` execution:
       before/after state, affected domains via `sesearch -b <bool> -A`
       (graceful fallback when `sesearch` is missing).
-- [ ] **2. Container integration (Podman & Flatpak)** (`src/container.rs`)
+- [!] **2. Container integration (Podman & Flatpak)** (`src/container.rs`)
       Classify `container_t`/`flatpak_*` denials; detect the missing `:z`/`:Z`
       volume-mount flag and suggest the corrected Podman invocation.
-- [ ] **3. Proactive context inspection** (`src/inspect.rs`)
+      Wired into `diagnose_with_oracle` (new `FixKind::ContainerVolume`);
+      CLI/GUI treat it as review-only guidance.
+- [!] **3. Proactive context inspection** (`src/inspect.rs`)
       Directory walker; per-file `matchpathcon` expected vs actual label
       (`getfattr`), producing a mismatch report (unlabeled / wrong label).
 - [ ] **4. Exporting & reporting** (`src/report.rs`)
