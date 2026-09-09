@@ -60,6 +60,20 @@ pub fn diagnose(
     expected_tcontext: Option<&str>,
     boolean_hint: Option<&str>,
 ) -> Diagnosis {
+    diagnose_with_oracle(event, expected_tcontext, boolean_hint, None)
+}
+
+/// Diagnose with an optional [`crate::analysis::WhyAnalysis`] oracle result.
+///
+/// When the oracle names booleans they take precedence over the static hint
+/// map; when it reports a missing TE rule (and no booleans), the diagnosis
+/// skips straight to the module fallback regardless of heuristics.
+pub fn diagnose_with_oracle(
+    event: &AvcEvent,
+    expected_tcontext: Option<&str>,
+    boolean_hint: Option<&str>,
+    oracle: Option<&crate::analysis::WhyAnalysis>,
+) -> Diagnosis {
     let perms = event.perms.join(", ");
     let who = event.comm.clone().unwrap_or_else(|| "?".to_string());
     let stype = event.source_type().unwrap_or_else(|| "?".to_string());
@@ -112,9 +126,25 @@ pub fn diagnose(
     let mut fixes = Vec::new();
     let confidence;
 
-    if event.tclass == "tcp_socket" || event.tclass == "udp_socket" {
+    // Oracle verdict: missing TE rule with no boolean candidates means the
+    // heuristics below cannot help — go straight to the module fallback.
+    let oracle_forces_module = oracle
+        .map(|o| !o.inconclusive && o.booleans.is_empty() && o.needs_type_enforcement)
+        .unwrap_or(false);
+    // Oracle booleans outrank the static map and the caller-supplied hint.
+    let oracle_boolean = oracle.and_then(|o| o.primary_boolean());
+    let hint = oracle_boolean.or(boolean_hint);
+
+    if oracle_forces_module {
+        confidence = Confidence::Low;
+        explanation.push_str(
+            " The system policy oracle (audit2why) confirms no boolean covers \
+             this access — it requires a new type-enforcement rule.",
+        );
+        fixes.push(module_fix(event));
+    } else if event.tclass == "tcp_socket" || event.tclass == "udp_socket" {
         confidence = Confidence::High;
-        if let Some(boolean) = boolean_hint.or_else(|| boolean_hint_for(event)) {
+        if let Some(boolean) = hint.or_else(|| boolean_hint_for(event)) {
             fixes.push(boolean_fix(&stype, &event.tclass, boolean));
         }
         fixes.push(module_fix(event));
@@ -124,7 +154,7 @@ pub fn diagnose(
             fixes.push(restorecon_fix(event));
             fixes.push(semanage_fix(event, expected_tcontext));
         }
-        if let Some(boolean) = boolean_hint.or_else(|| boolean_hint_for(event)) {
+        if let Some(boolean) = hint.or_else(|| boolean_hint_for(event)) {
             fixes.push(SuggestedFix {
                 kind: FixKind::SetBoolean,
                 title: format!("Allow via boolean {boolean}"),
@@ -137,7 +167,7 @@ pub fn diagnose(
             });
         }
         fixes.push(module_fix(event));
-    } else if let Some(boolean) = boolean_hint.or_else(|| boolean_hint_for(event)) {
+    } else if let Some(boolean) = hint.or_else(|| boolean_hint_for(event)) {
         confidence = Confidence::Medium;
         fixes.push(boolean_fix(&stype, &event.tclass, boolean));
         fixes.push(module_fix(event));
@@ -309,6 +339,46 @@ mod tests {
         let d = diagnose(&e, None, None);
         assert_eq!(d.fixes[0].kind, FixKind::SetBoolean);
         assert!(d.fixes[0].command.contains("httpd_can_network_connect"));
+    }
+
+    #[test]
+    fn oracle_boolean_outranks_static_hint() {
+        use crate::analysis::WhyAnalysis;
+        let mut e = httpd_home();
+        e.tclass = "tcp_socket".into();
+        e.perms = vec!["name_connect".into()];
+        e.path = None;
+        let oracle = WhyAnalysis {
+            raw: String::new(),
+            booleans: vec!["httpd_can_network_relay".into()],
+            needs_type_enforcement: false,
+            inconclusive: false,
+        };
+        let d = diagnose_with_oracle(&e, None, Some("ignored_hint"), Some(&oracle));
+        assert_eq!(d.fixes[0].kind, FixKind::SetBoolean);
+        assert!(d.fixes[0].command.contains("httpd_can_network_relay"));
+    }
+
+    #[test]
+    fn oracle_missing_te_forces_module_fallback() {
+        use crate::analysis::WhyAnalysis;
+        // Even a textbook mislabel bows to the oracle: if the loaded policy
+        // has no boolean for it, only a module helps.
+        let oracle = WhyAnalysis {
+            raw: String::new(),
+            booleans: Vec::new(),
+            needs_type_enforcement: true,
+            inconclusive: false,
+        };
+        let d = diagnose_with_oracle(
+            &httpd_home(),
+            Some("system_u:object_r:httpd_sys_content_t:s0"),
+            None,
+            Some(&oracle),
+        );
+        assert_eq!(d.fixes.len(), 1);
+        assert_eq!(d.fixes[0].kind, FixKind::PolicyModule);
+        assert!(d.explanation.contains("audit2why"));
     }
 
     #[test]

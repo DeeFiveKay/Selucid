@@ -5,7 +5,8 @@ for RHEL, Fedora, and compatible distributions. It bridges the gap between
 cryptic SELinux AVC denials and the humans who must fix them.
 
 - **Zero-overhead audit parsing** — high-throughput log processing in Rust (`nom`).
-- **Context-aware diagnostics** — raw denials translated into plain language.
+- **Context-aware diagnostics** — raw denials translated into plain language,
+  cross-checked against the loaded policy via `audit2why`.
 - **Non-destructive remediation** — guided `restorecon`, `setsebool`, `semanage`,
   or `audit2allow` module generation via Polkit authorization. Nothing runs as
   root without explicit approval.
@@ -22,16 +23,30 @@ safest way to allow it.
 ausearch -m avc -ts recent 2>/dev/null | selucid explain
 selucid explain /var/log/audit/audit.log
 
+# Cross-check against the loaded policy (audit2why ground truth)
+selucid explain --why /var/log/audit/audit.log
+selucid why /var/log/audit/audit.log
+
 # Show only remediation commands
 selucid suggest /var/log/audit/audit.log
 
-# Follow the audit log live
+# Follow the audit log live (inotify-driven, polling fallback)
 selucid watch
+
+# Preview a fix, then apply it via pkexec after confirmation
+selucid fix audit.log --index 1 --fix 1
+selucid fix audit.log --index 1 --fix 1 --execute
+
+# Export for scripting / tickets / SIEM pipelines
+selucid export audit.log --format json --with-diagnoses -o report.json
+selucid export audit.log --format csv --with-diagnoses
+selucid export audit.log --format jsonl -o denials.jsonl
 
 # Inspect SELinux booleans
 selucid booleans --search httpd
 
-# Full-screen terminal UI (Vim keys: j/k navigate, / filter, q quit)
+# Full-screen terminal UI: Denials + Booleans tabs, live tailing
+# (Vim keys: j/k navigate, Tab switch tab, / filter, t preview toggle, q quit)
 selucid-tui /var/log/audit/audit.log
 ```
 

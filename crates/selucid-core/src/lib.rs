@@ -5,6 +5,7 @@
 //! one diagnostic engine. Nothing in this crate escalates privileges on its
 //! own; see [`privileged`] for the reviewed-command builders.
 
+pub mod analysis;
 pub mod avc;
 pub mod booleans;
 pub mod grouping;
@@ -13,7 +14,11 @@ pub mod parser;
 pub mod privileged;
 pub mod reader;
 
+pub use analysis::{WhyAnalysis, analyze_batch, analyze_raw};
 pub use avc::{AuditRecord, AvcEvent, SelinuxContext};
 pub use grouping::{extract_avc_events, group_by_serial};
-pub use inference::{Confidence, Diagnosis, FixKind, SuggestedFix, diagnose};
+pub use inference::{
+    Confidence, Diagnosis, FixKind, SuggestedFix, boolean_hint_for, diagnose, diagnose_with_oracle,
+};
 pub use parser::{ParseError, parse_audit_line};
+pub use reader::{LogWatcher, WatchEvent};
