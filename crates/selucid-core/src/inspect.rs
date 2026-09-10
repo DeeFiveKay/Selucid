@@ -204,7 +204,7 @@ mod tests {
     fn walk_visits_tree_bounded_by_depth() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("tree");
-        std::fs::create_dir_all(&root.join("a")).unwrap();
+        std::fs::create_dir_all(root.join("a")).unwrap();
         std::fs::write(root.join("f1"), "x").unwrap();
         std::fs::write(root.join("a").join("deep.txt"), "y").unwrap();
         // depth 2 finds the nested file too

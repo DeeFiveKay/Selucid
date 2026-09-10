@@ -186,6 +186,17 @@ enum ExportFormat {
     Csv,
 }
 
+/// Output formats for `selucid report`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum CliReportFormat {
+    /// Human-readable Markdown findings report.
+    Markdown,
+    /// Runnable, confirmation-gated Bash remediation script.
+    Bash,
+    /// Ansible playbook with one task per fix.
+    Ansible,
+}
+
 impl std::fmt::Display for ExportFormat {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -194,17 +205,6 @@ impl std::fmt::Display for ExportFormat {
             ExportFormat::Csv => write!(f, "csv"),
         }
     }
-}
-
-/// Output formats for `selucid report`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-enum CliReportFormat {
-    /// Human/PR-friendly Markdown findings report.
-    Markdown,
-    /// Runnable, confirmation-gated Bash remediation script.
-    Bash,
-    /// Ansible playbook with one task per fix.
-    Ansible,
 }
 
 impl From<CliReportFormat> for selucid_core::ReportFormat {
@@ -337,21 +337,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Err(e) => {
                     eprintln!("Fix failed: {e}");
                     std::process::exit(1);
-                }
-            }
-        }
-        Commands::Booleans { search, json } => {
-            let list = match search {
-                Some(q) => selucid_core::booleans::search_booleans(&q),
-                None => selucid_core::booleans::list_booleans(),
-            };
-            if json {
-                println!("{}", serde_json::to_string_pretty(&list)?);
-            } else if list.is_empty() {
-                println!("No SELinux booleans found (is SELinux enabled?).");
-            } else {
-                for b in list {
-                    println!("{:<45} {}", b.name, if b.active { "on" } else { "off" });
                 }
             }
         }
@@ -527,6 +512,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         c.detail,
                         c.reference
                     );
+                }
+            }
+        }
+        Commands::Booleans { search, json } => {
+            let list = match search {
+                Some(q) => selucid_core::booleans::search_booleans(&q),
+                None => selucid_core::booleans::list_booleans(),
+            };
+            if json {
+                println!("{}", serde_json::to_string_pretty(&list)?);
+            } else if list.is_empty() {
+                println!("No SELinux booleans found (is SELinux enabled?).");
+            } else {
+                for b in list {
+                    println!("{:<45} {}", b.name, if b.active { "on" } else { "off" });
                 }
             }
         }
