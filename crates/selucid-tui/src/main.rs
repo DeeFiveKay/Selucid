@@ -22,11 +22,21 @@ use std::time::Duration;
 struct App {
     events: Vec<AvcEvent>,
     diagnoses: Vec<Diagnosis>,
-    /// Tab index: 0 = Denials, 1 = Booleans.
+    /// Tab index: 0 = Denials, 1 = Booleans, 2 = Incidents, 3 = History.
     tab: usize,
     booleans: Vec<selucid_core::booleans::BooleanInfo>,
     bool_filter: String,
     bool_state: ListState,
+    /// Sliding-window tracker fed by live ingest (`anomaly.rs`).
+    tracker: selucid_core::anomaly::DenialTracker,
+    /// Incidents raised so far (denial bursts).
+    incidents: Vec<selucid_core::anomaly::Incident>,
+    incident_state: ListState,
+    /// Read-only view of the fix journal (`~/.local/state/selucid`).
+    history: Vec<selucid_core::history::HistoryEntry>,
+    history_state: ListState,
+    /// Sandbox What-If diff for the selected denial (toggle with `t`).
+    sandbox: Option<selucid_core::SimulationDiff>,
     filter: String,
     filtering: bool,
     show_fix: bool,
@@ -66,6 +76,12 @@ impl App {
             booleans,
             bool_filter: String::new(),
             bool_state,
+            tracker: selucid_core::anomaly::DenialTracker::default(),
+            incidents: Vec::new(),
+            incident_state: ListState::default(),
+            history: selucid_core::history::list_entries(),
+            history_state: ListState::default(),
+            sandbox: None,
             filter: String::new(),
             filtering: false,
             show_fix: false,
@@ -121,8 +137,10 @@ impl App {
     }
 
     /// Append live denial events (dedup by audit serial) and rebuild their
-    /// diagnoses. Called from the notify watcher bridge.
+    /// diagnoses. Called from the notify watcher bridge. New events are also
+    /// fed through the sliding-window tracker; raised incidents are kept.
     fn ingest(&mut self, incoming: Vec<AvcEvent>) {
+        let mut fresh: Vec<AvcEvent> = Vec::new();
         for event in incoming {
             if self.events.iter().any(|e| e.audit_id == event.audit_id) {
                 continue;
@@ -133,12 +151,40 @@ impl App {
                 .filter(|p| p.starts_with('/'))
                 .and_then(selucid_core::privileged::expected_context);
             let diagnosis = selucid_core::diagnose(&event, expected.as_deref(), None);
-            self.events.push(event);
+            self.events.push(event.clone());
             self.diagnoses.push(diagnosis);
+            fresh.push(event);
+        }
+        for incident in self.tracker.track_batch(&fresh) {
+            self.incidents.push(incident);
+            let last = self.incidents.last().expect("just pushed");
+            self.status = format!(
+                "ANOMALY: {} denial(s) from {} on {} ({})",
+                last.count, last.scontext, last.tclass, last.severity.as_str()
+            );
         }
         if self.list_state.selected().is_none() && !self.events.is_empty() {
             self.list_state.select(Some(0));
         }
+    }
+
+    /// Label shown in the Denials list; `[c]` marks container-sourced denials.
+    fn denial_label(&self, i: usize) -> String {
+        let e = &self.events[i];
+        let marker = if selucid_core::container::is_container_source(e) {
+            "[c] "
+        } else {
+            ""
+        };
+        format!("{}  {}{}", e.serial, marker, e.summary())
+    }
+
+    /// Run the sandbox What-If on the selected denial's first fix (read-only).
+    fn simulate_selected(&mut self) {
+        self.sandbox = self
+            .selected()
+            .and_then(|i| self.diagnoses[i].fixes.first().cloned())
+            .map(|f| selucid_core::simulate(&f));
     }
 
     fn move_bool_down(&mut self) {
@@ -161,6 +207,46 @@ impl App {
         self.bool_state.select(Some(next));
     }
 
+    fn move_incident_down(&mut self) {
+        let len = self.incidents.len();
+        if len == 0 {
+            return;
+        }
+        let next = match self.incident_state.selected() {
+            Some(i) => (i + 1).min(len - 1),
+            None => 0,
+        };
+        self.incident_state.select(Some(next));
+    }
+
+    fn move_incident_up(&mut self) {
+        let next = match self.incident_state.selected() {
+            Some(i) => i.saturating_sub(1),
+            None => 0,
+        };
+        self.incident_state.select(Some(next));
+    }
+
+    fn move_history_down(&mut self) {
+        let len = self.history.len();
+        if len == 0 {
+            return;
+        }
+        let next = match self.history_state.selected() {
+            Some(i) => (i + 1).min(len - 1),
+            None => 0,
+        };
+        self.history_state.select(Some(next));
+    }
+
+    fn move_history_up(&mut self) {
+        let next = match self.history_state.selected() {
+            Some(i) => i.saturating_sub(1),
+            None => 0,
+        };
+        self.history_state.select(Some(next));
+    }
+
     fn move_down(&mut self) {
         let len = self.visible().len();
         if len == 0 {
@@ -171,6 +257,7 @@ impl App {
             None => 0,
         };
         self.list_state.select(Some(next));
+        self.sandbox = None;
     }
 
     fn move_up(&mut self) {
@@ -179,6 +266,7 @@ impl App {
             None => 0,
         };
         self.list_state.select(Some(next));
+        self.sandbox = None;
     }
 }
 
@@ -244,29 +332,37 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             match key.code {
                 KeyCode::Char('q') | KeyCode::Esc => break,
-                KeyCode::Tab | KeyCode::Char('1') | KeyCode::Char('2') => {
-                    app.tab = (app.tab + 1) % 2;
+                KeyCode::Tab => {
+                    app.tab = (app.tab + 1) % 4;
+                    app.sandbox = None;
                 }
-                KeyCode::Char('j') | KeyCode::Down => {
-                    if app.tab == 1 {
-                        app.move_bool_down();
-                    } else {
-                        app.move_down();
-                    }
+                KeyCode::Char(n @ '1'..='4') => {
+                    app.tab = n as usize - '1' as usize;
+                    app.sandbox = None;
                 }
-                KeyCode::Char('k') | KeyCode::Up => {
-                    if app.tab == 1 {
-                        app.move_bool_up();
-                    } else {
-                        app.move_up();
-                    }
-                }
+                KeyCode::Char('j') | KeyCode::Down => match app.tab {
+                    1 => app.move_bool_down(),
+                    2 => app.move_incident_down(),
+                    3 => app.move_history_down(),
+                    _ => app.move_down(),
+                },
+                KeyCode::Char('k') | KeyCode::Up => match app.tab {
+                    1 => app.move_bool_up(),
+                    2 => app.move_incident_up(),
+                    3 => app.move_history_up(),
+                    _ => app.move_up(),
+                },
                 KeyCode::Char('/') => app.filtering = true,
                 KeyCode::Char('c') => {
                     app.filter.clear();
                     app.bool_filter.clear();
                 }
-                KeyCode::Enter | KeyCode::Char('p') => app.show_fix = !app.show_fix,
+                KeyCode::Enter | KeyCode::Char('p') if app.tab == 0 => {
+                    app.show_fix = !app.show_fix;
+                }
+                // On the Denials tab, `t` runs the read-only sandbox What-If
+                // for the selected denial's first suggested fix.
+                KeyCode::Char('t') if app.tab == 0 => app.simulate_selected(),
                 // On the Booleans tab, `t` previews the setsebool command for
                 // the selected boolean in the status line (no execution).
                 KeyCode::Char('t') if app.tab == 1 => {
@@ -304,7 +400,7 @@ fn render(f: &mut ratatui::Frame, app: &mut App) {
             Constraint::Length(1),
         ])
         .split(area);
-    let tabs = Tabs::new(vec!["Denials", "Booleans"])
+    let tabs = Tabs::new(vec!["Denials", "Booleans", "Incidents", "History"])
         .block(
             Block::default()
                 .borders(Borders::ALL)
@@ -317,13 +413,14 @@ fn render(f: &mut ratatui::Frame, app: &mut App) {
                 .add_modifier(Modifier::BOLD),
         );
     f.render_widget(tabs, rows[0]);
-    if app.tab == 1 {
-        render_booleans(f, app, rows[1]);
-    } else {
-        render_denials(f, app, rows[1]);
+    match app.tab {
+        1 => render_booleans(f, app, rows[1]),
+        2 => render_incidents(f, app, rows[1]),
+        3 => render_history(f, app, rows[1]),
+        _ => render_denials(f, app, rows[1]),
     }
     let status = if app.status.is_empty() {
-        "q quit · Tab tabs · / filter · Enter preview fix · t (Booleans) preview toggle".to_string()
+        "q quit · Tab/1-4 tabs · / filter · Enter fix preview · t What-If sandbox (Denials) / bool preview".to_string()
     } else {
         app.status.clone()
     };
@@ -339,13 +436,7 @@ fn render_denials(f: &mut ratatui::Frame, app: &mut App, area: ratatui::layout::
 
     let items: Vec<ListItem> = visible
         .iter()
-        .map(|&i| {
-            ListItem::new(format!(
-                "{}  {}",
-                app.events[i].serial,
-                app.events[i].summary()
-            ))
-        })
+        .map(|&i| ListItem::new(app.denial_label(i)))
         .collect();
     let title = if app.filter.is_empty() {
         "Denials (j/k move, / filter, q quit)".to_string()
@@ -364,6 +455,29 @@ fn render_denials(f: &mut ratatui::Frame, app: &mut App, area: ratatui::layout::
     let detail = match app.selected() {
         Some(i) => detail_text(&app.events[i], &app.diagnoses[i], app.show_fix),
         None => "No denials. Usage:\n  selucid-tui /var/log/audit/audit.log".to_string(),
+    };
+    // When a What-If diff is loaded (via `t`), show it under the fix list.
+    let detail = match &app.sandbox {
+        Some(diff) => format!(
+            "{detail}\n\n── What-If sandbox (read-only) ──\n{}\n  changes:\n{}\n  domains gaining access: {}\n  notes:\n{}\n",
+            diff.fix_title,
+            diff.changes
+                .iter()
+                .map(|c| format!("    {c}"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+            if diff.domains_gaining.is_empty() {
+                "(none observed)".into()
+            } else {
+                diff.domains_gaining.join(", ")
+            },
+            diff.notes
+                .iter()
+                .map(|n| format!("    ! {n}"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        ),
+        None => detail,
     };
     let hint = if app.filtering {
         "  [typing filter — Enter/Esc done]"
@@ -406,6 +520,63 @@ fn render_booleans(f: &mut ratatui::Frame, app: &mut App, area: ratatui::layout:
                 .add_modifier(Modifier::BOLD),
         );
     f.render_stateful_widget(list, area, &mut app.bool_state);
+}
+
+fn render_incidents(f: &mut ratatui::Frame, app: &mut App, area: ratatui::layout::Rect) {
+    let items: Vec<ListItem> = app
+        .incidents
+        .iter()
+        .map(|inc| {
+            ListItem::new(format!(
+                "[{:>7}] {} denials from {} on {}",
+                inc.severity.as_str(),
+                inc.count,
+                inc.scontext,
+                inc.tclass
+            ))
+        })
+        .collect();
+    let list = List::new(items)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Incidents — denial bursts (live watch feeds this tab)"),
+        )
+        .highlight_style(
+            Style::default()
+                .bg(Color::Red)
+                .add_modifier(Modifier::BOLD),
+        );
+    f.render_stateful_widget(list, area, &mut app.incident_state);
+}
+
+fn render_history(f: &mut ratatui::Frame, app: &mut App, area: ratatui::layout::Rect) {
+    let items: Vec<ListItem> = app
+        .history
+        .iter()
+        .map(|h| {
+            ListItem::new(format!(
+                "{}  {:<22} {}  [{} -> {}]",
+                h.executed_at,
+                h.action_id,
+                h.argv.join(" "),
+                h.before.as_deref().unwrap_or("?"),
+                h.after.as_deref().unwrap_or("?"),
+            ))
+        })
+        .collect();
+    let list = List::new(items)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("History — fixes applied via Selucid (read-only view)"),
+        )
+        .highlight_style(
+            Style::default()
+                .bg(Color::Blue)
+                .add_modifier(Modifier::BOLD),
+        );
+    f.render_stateful_widget(list, area, &mut app.history_state);
 }
 
 fn detail_text(event: &AvcEvent, d: &Diagnosis, show_fix: bool) -> String {
@@ -506,6 +677,12 @@ mod app_tests {
             booleans: Vec::new(),
             bool_filter: String::new(),
             bool_state: ListState::default(),
+            tracker: selucid_core::anomaly::DenialTracker::default(),
+            incidents: Vec::new(),
+            incident_state: ListState::default(),
+            history: Vec::new(),
+            history_state: ListState::default(),
+            sandbox: None,
             filter: String::new(),
             filtering: false,
             show_fix: false,
@@ -552,6 +729,56 @@ mod app_tests {
         assert_eq!(a.events.len(), 3);
         assert_eq!(a.diagnoses.len(), 3);
         assert!(a.events.iter().any(|e| e.serial == 3));
+    }
+
+    #[test]
+    fn ingest_raises_anomaly_incident_on_burst() {
+        let mut a = app();
+        let threshold = a.tracker.threshold();
+        let burst: Vec<AvcEvent> = (100..100 + threshold as u64 + 1)
+            .map(|s| event(s, "httpd", "system_u:system_r:httpd_t:s0"))
+            .collect();
+        a.ingest(burst);
+        assert_eq!(a.incidents.len(), 1);
+        assert!(a.status.contains("ANOMALY"));
+        // A single follow-up denial does not raise a second incident
+        // (the burst is still ongoing).
+        a.ingest(vec![event(999, "httpd", "system_u:system_r:httpd_t:s0")]);
+        assert_eq!(a.incidents.len(), 1);
+    }
+
+    #[test]
+    fn denial_label_marks_container_source() {
+        let mut a = app();
+        a.events.push(event(
+            7,
+            "podman",
+            "system_u:system_r:container_t:s0:c1,c2",
+        ));
+        assert!(a.denial_label(2).starts_with("7  [c] "));
+        assert!(!a.denial_label(0).contains("[c]"));
+    }
+
+    #[test]
+    fn sandbox_whatif_populates_and_clears_on_move() {
+        let mut a = app();
+        a.sandbox = Some(selucid_core::SimulationDiff {
+            fix_title: "t".into(),
+            complete: true,
+            changes: vec![],
+            domains_gaining: vec![],
+            notes: vec![],
+        });
+        a.move_down();
+        a.sandbox = Some(selucid_core::SimulationDiff {
+            fix_title: "t".into(),
+            complete: true,
+            changes: vec![],
+            domains_gaining: vec![],
+            notes: vec![],
+        });
+        a.move_up();
+        assert!(a.sandbox.is_none());
     }
 
     #[test]
