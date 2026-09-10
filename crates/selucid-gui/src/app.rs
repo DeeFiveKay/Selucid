@@ -350,15 +350,9 @@ impl SimpleComponent for App {
                     set_orientation: gtk4::Orientation::Vertical,
 
                     libadwaita::HeaderBar {
-                        pack_start = &gtk4::Box {
-                            set_spacing: 6,
-                            gtk4::Image {
-                                set_icon_name: Some("security-medium-symbolic"),
-                            },
-                            gtk4::Label {
-                                set_label: "Selucid",
-                                add_css_class: "title",
-                            },
+                        pack_start = &gtk4::Image {
+                            set_icon_name: Some("selucid"),
+                            set_pixel_size: 32,
                         },
                         pack_start: view_switcher = &libadwaita::ViewSwitcher {
                             set_policy: libadwaita::ViewSwitcherPolicy::Wide,
@@ -432,6 +426,15 @@ impl SimpleComponent for App {
         }
 
         let widgets = view_output!();
+
+        // Register our bundled icon theme so `set_icon_name("selucid")` resolves
+        // to selucid-shield.svg / PNGs at runtime (even without a system install).
+        let icon_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../icons");
+        if icon_path.is_dir() {
+            let theme = gtk4::IconTheme::for_display(&gtk4::gdk::Display::default().unwrap());
+            theme.add_search_path(&icon_path);
+        }
 
         // The ViewSwitcher needs the ViewStack handle; both live in the
         // generated Widgets struct (names from `view!` above).
@@ -642,6 +645,7 @@ fn build_denials_page(
     let list_scroll = gtk4::ScrolledWindow::new();
     list_scroll.set_hexpand(false);
     list_scroll.set_vexpand(true);
+    list_scroll.set_min_content_width(320);
     list_scroll.set_child(Some(&list_box));
 
     // Right column: detail pane.
