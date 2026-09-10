@@ -16,3 +16,7 @@
 *.te
 selucid_fix_*
 /dist/
+
+.gitignore
+Future_Plan.md
+PROGRESS.md
