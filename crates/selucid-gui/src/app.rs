@@ -562,21 +562,29 @@ impl SimpleComponent for App {
             }
             #[allow(deprecated)]
             Msg::About => {
-                // ASCII logo from ascii.txt as a release-notes header.
-                let logo_text = include_str!("../../../ascii.txt");
                 let about = libadwaita::AboutWindow::builder()
                     .application_name("Selucid")
                     .version(env!("CARGO_PKG_VERSION"))
                     .developer_name("Hugo Hurme")
                     .license_type(gtk4::License::Gpl30)
-                    .website("https://github.com/banaani/selucid")
                     .comments("SELinux AVC troubleshooting toolkit — read-only diagnosis, Polkit-escorted remediation, What-If sandbox.")
+                    .release_notes("<release version=\"1.0.0\" date=\"2026-01-01\">
+  <description>
+    <p>Initial release of Selucid.</p>
+    <ul>
+      <li>Read-only SELinux diagnosis</li>
+      <li>Polkit-escorted remediation</li>
+      <li>What-If sandbox</li>
+      <li>Light/dark theme toggle</li>
+      <li>Preferences window</li>
+    </ul>
+  </description>
+</release>")
                     .copyright("© 2026 Hugo Hurme")
-                    .release_notes(format!("<pre>
-{}
-</pre>", logo_text))
                     .modal(true)
                     .build();
+                about.add_link("GitHub", "https://github.com/DeeFiveKay/Selucid");
+                about.add_link("Website", "https://www.mv-design.fi");
                 if let Some(window) = &self.window {
                     about.set_transient_for(Some(window));
                 }
