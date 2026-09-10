@@ -1018,7 +1018,7 @@ fn apply_selected(model: &App) -> Option<String> {
 fn show_preferences_dialog(app: &App, sender: &relm4::ComponentSender<App>) {
     // libadwaita::Window is an AdwWindow — it manages its own title bar.
     // Do NOT call set_titlebar(); that triggers Adwaita-ERROR.
-    let prefs_win = libadwaita::Window::new();
+    let prefs_win = gtk4::Window::new();
     prefs_win.set_title(Some("Preferences"));
     prefs_win.set_default_width(420);
     prefs_win.set_default_height(300);
