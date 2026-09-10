@@ -567,7 +567,9 @@ impl SimpleComponent for App {
                     .website("https://github.com/banaani/selucid")
                     .comments("SELinux AVC troubleshooting toolkit — read-only diagnosis, Polkit-escorted remediation, What-If sandbox.")
                     .copyright("© 2026 Hugo Hurme")
-                    .release_notes(logo_text)
+                    .release_notes(format!("<pre>
+{}
+</pre>", logo_text))
                     .modal(true)
                     .build();
                 if let Some(window) = &self.window {
@@ -582,14 +584,8 @@ impl SimpleComponent for App {
                 } else {
                     libadwaita::ColorScheme::ForceLight
                 };
-                if let Some(_window) = &self.window {
-                    let style = libadwaita::StyleManager::default();
-                    style.set_color_scheme(scheme);
-                    // Persist via GTK's own theme mechanism (session-scoped).
-                    gtk4::Settings::default().map(|s| {
-                        s.set_gtk_application_prefer_dark_theme(self.dark_theme);
-                    });
-                }
+                let style = libadwaita::StyleManager::default();
+                style.set_color_scheme(scheme);
                 toast(self, if self.dark_theme { "Dark theme on" } else { "Light theme on" });
             }
             Msg::ShowPreferences => {
@@ -1020,8 +1016,8 @@ fn apply_selected(model: &App) -> Option<String> {
 
 /// Build and present a preferences window bound to the app state.
 fn show_preferences_dialog(app: &App, sender: &relm4::ComponentSender<App>) {
-    // libadwaita::Dialog doesn't implement GtkWindowExt in this binding version,
-    // so use a plain libadwaita::Window instead (it IS a GtkWindow subclass).
+    // libadwaita::Window is an AdwWindow — it manages its own title bar.
+    // Do NOT call set_titlebar(); that triggers Adwaita-ERROR.
     let prefs_win = libadwaita::Window::new();
     prefs_win.set_title(Some("Preferences"));
     prefs_win.set_default_width(420);
@@ -1031,17 +1027,12 @@ fn show_preferences_dialog(app: &App, sender: &relm4::ComponentSender<App>) {
 
     // Transient for the main window so WM groups it correctly.
     if let Some(parent) = &app.window {
-        let _ = parent; // app.window is the relm4-managed window handle
+        prefs_win.set_transient_for(Some(parent));
     }
 
     let content = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
 
-    // Header bar.
-    let header = libadwaita::HeaderBar::new();
-    header.set_show_title(true);
-    prefs_win.set_titlebar(Some(&header));
-
-    // Preferences list inside a boxed-list style.
+    // Preferences list.
     let list = libadwaita::PreferencesGroup::new();
     list.set_title("Behavior");
 
