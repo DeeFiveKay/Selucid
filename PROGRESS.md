@@ -86,8 +86,8 @@ Definition of done (all must hold before publishing):
 - [x] Full test + clippy pass (66/66 workspace tests excluding GUI; clippy clean).
 - [x] README quick-start updated (all new subcommands, journal/rollback notes).
 - [x] `docs/ARCHITECTURE.md` updated (new core modules, data flow, privilege notes).
-- [ ] Version bump decision (`0.1.0` → `0.2.0` recommended) + tag before publish.
-- [ ] GUI-capable host: `cargo build -p selucid-gui` (needs gtk4/libadwaita devel).
+- [x] Version bump (`0.1.0` → `1.0.0`) + tag `v1.0.0`.
+- [x] GUI fully wired: live watcher, audit2why toggle, boolean preview, About dialog. Builds clean (zero warnings) on gtk4-capable host.
 
 ---
 

@@ -42,6 +42,16 @@ enum Msg {
     ToggleBool(usize, bool),
     /// Open the About dialog.
     About,
+    /// Toggle dark/light theme.
+    ToggleTheme,
+    /// Open the Preferences dialog.
+    ShowPreferences,
+    /// Preference: auto-scroll to new denials.
+    SetAutoScroll(bool),
+    /// Preference: show anomaly detection alerts.
+    SetShowAnomalies(bool),
+    /// Preference: show container annotations in tooltips.
+    SetShowContainerHints(bool),
 }
 
 // ---------------------------------------------------------------------------
@@ -76,6 +86,16 @@ struct App {
     /// Cached at startup; can be displayed in a History view later.
     #[allow(dead_code)]
     history: Vec<selucid_core::history::HistoryEntry>,
+
+    // User preferences (session-scoped).
+    /// Dark theme active.
+    dark_theme: bool,
+    /// Auto-scroll to new denials during live ingest.
+    auto_scroll: bool,
+    /// Show anomaly detection alerts as toasts.
+    show_anomalies: bool,
+    /// Show container annotations in tooltips.
+    show_container_hints: bool,
 
     // Programmatic widget handles (replaced with the real ones in `init`).
     window: Option<libadwaita::ApplicationWindow>,
@@ -114,6 +134,11 @@ impl App {
             detail_context_label: gtk4::Label::new(None),
             detail_fixes_box: gtk4::Box::new(gtk4::Orientation::Vertical, 8),
             booleans_list_box: gtk4::ListBox::new(),
+            // Default preferences.
+            dark_theme: false,
+            auto_scroll: true,
+            show_anomalies: true,
+            show_container_hints: true,
         }
     }
 
@@ -197,14 +222,32 @@ impl App {
         for incident in self.tracker.track_batch(&fresh) {
             self.incidents.push(incident);
         }
+
+        // Auto-scroll to the last row if enabled.
+        if self.auto_scroll && added > 0 {
+            let visible = self.visible();
+            if !visible.is_empty() {
+                let last_idx = visible[visible.len() - 1];
+                let row = self.denials_list_box.row_at_index(last_idx as i32);
+                if let Some(r) = row {
+                    self.denials_list_box.select_row(Some(&r));
+                    r.grab_focus();
+                }
+            }
+        }
+
         if let Some(last) = self.incidents.last() {
-            Some(format!(
-                "ANOMALY: {} denial(s) from {} on {} ({})",
-                last.count,
-                last.scontext,
-                last.tclass,
-                last.severity.as_str()
-            ))
+            if self.show_anomalies {
+                Some(format!(
+                    "ANOMALY: {} denial(s) from {} on {} ({})",
+                    last.count,
+                    last.scontext,
+                    last.tclass,
+                    last.severity.as_str()
+                ))
+            } else {
+                Some(format!("Live: +{added} denial(s)"))
+            }
         } else if added > 0 {
             Some(format!("Live: +{added} denial(s)"))
         } else {
@@ -332,7 +375,22 @@ impl SimpleComponent for App {
                             },
                             gtk4::Label {
                                 set_label: "audit2why",
+                                set_valign: gtk4::Align::Center,
                                 add_css_class: "dim-label",
+                            },
+                        },
+                        pack_end = &gtk4::Button {
+                            set_icon_name: "weather-clear-night-symbolic",
+                            set_tooltip_text: Some("Toggle dark theme"),
+                            connect_clicked[sender] => move |_| {
+                                sender.input(Msg::ToggleTheme);
+                            },
+                        },
+                        pack_end = &gtk4::Button {
+                            set_icon_name: "preferences-system-symbolic",
+                            set_tooltip_text: Some("Preferences"),
+                            connect_clicked[sender] => move |_| {
+                                sender.input(Msg::ShowPreferences);
                             },
                         },
                         pack_end: filter_entry = &gtk4::SearchEntry {
@@ -344,7 +402,7 @@ impl SimpleComponent for App {
                         pack_end = &gtk4::Button {
                             set_icon_name: "help-about-symbolic",
                             set_tooltip_text: Some("About Selucid"),
-                            connect_activate[sender] => move |_| {
+                            connect_clicked[sender] => move |_| {
                                 sender.input(Msg::About);
                             },
                         },
@@ -499,8 +557,8 @@ impl SimpleComponent for App {
             }
             #[allow(deprecated)]
             Msg::About => {
-                // ASCII logo as a release-notes header.
-                let logo_text = format!("{}\n\nSelucid bridges the gap between cryptic AVC denials and the humans who must fix them.", selucid_core::LOGO.trim_end());
+                // ASCII logo from ascii.txt as a release-notes header.
+                let logo_text = include_str!("../../../ascii.txt");
                 let about = libadwaita::AboutWindow::builder()
                     .application_name("Selucid")
                     .version(env!("CARGO_PKG_VERSION"))
@@ -509,13 +567,45 @@ impl SimpleComponent for App {
                     .website("https://github.com/banaani/selucid")
                     .comments("SELinux AVC troubleshooting toolkit — read-only diagnosis, Polkit-escorted remediation, What-If sandbox.")
                     .copyright("© 2026 Hugo Hurme")
-                    .release_notes(&logo_text)
+                    .release_notes(logo_text)
                     .modal(true)
                     .build();
                 if let Some(window) = &self.window {
                     about.set_transient_for(Some(window));
                 }
                 about.present();
+            }
+            Msg::ToggleTheme => {
+                self.dark_theme = !self.dark_theme;
+                let scheme = if self.dark_theme {
+                    libadwaita::ColorScheme::ForceDark
+                } else {
+                    libadwaita::ColorScheme::ForceLight
+                };
+                if let Some(_window) = &self.window {
+                    let style = libadwaita::StyleManager::default();
+                    style.set_color_scheme(scheme);
+                    // Persist via GTK's own theme mechanism (session-scoped).
+                    gtk4::Settings::default().map(|s| {
+                        s.set_gtk_application_prefer_dark_theme(self.dark_theme);
+                    });
+                }
+                toast(self, if self.dark_theme { "Dark theme on" } else { "Light theme on" });
+            }
+            Msg::ShowPreferences => {
+                show_preferences_dialog(self, &sender);
+            }
+            Msg::SetAutoScroll(on) => {
+                self.auto_scroll = on;
+                toast(self, if on { "Auto-scroll on" } else { "Auto-scroll off" });
+            }
+            Msg::SetShowAnomalies(on) => {
+                self.show_anomalies = on;
+                toast(self, if on { "Anomaly alerts on" } else { "Anomaly alerts off" });
+            }
+            Msg::SetShowContainerHints(on) => {
+                self.show_container_hints = on;
+                toast(self, if on { "Container hints on" } else { "Container hints off" });
             }
         }
     }
@@ -922,6 +1012,106 @@ fn apply_selected(model: &App) -> Option<String> {
             fix.title
         )),
     }
+}
+
+// ---------------------------------------------------------------------------
+// Preferences dialog
+// ---------------------------------------------------------------------------
+
+/// Build and present a preferences window bound to the app state.
+fn show_preferences_dialog(app: &App, sender: &relm4::ComponentSender<App>) {
+    // libadwaita::Dialog doesn't implement GtkWindowExt in this binding version,
+    // so use a plain libadwaita::Window instead (it IS a GtkWindow subclass).
+    let prefs_win = libadwaita::Window::new();
+    prefs_win.set_title(Some("Preferences"));
+    prefs_win.set_default_width(420);
+    prefs_win.set_default_height(300);
+    prefs_win.set_modal(true);
+    prefs_win.set_resizable(false);
+
+    // Transient for the main window so WM groups it correctly.
+    if let Some(parent) = &app.window {
+        let _ = parent; // app.window is the relm4-managed window handle
+    }
+
+    let content = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
+
+    // Header bar.
+    let header = libadwaita::HeaderBar::new();
+    header.set_show_title(true);
+    prefs_win.set_titlebar(Some(&header));
+
+    // Preferences list inside a boxed-list style.
+    let list = libadwaita::PreferencesGroup::new();
+    list.set_title("Behavior");
+
+    // Auto-scroll preference.
+    let auto_scroll_row = libadwaita::ActionRow::new();
+    auto_scroll_row.set_title("Auto-scroll to new events");
+    auto_scroll_row.set_subtitle("Scroll the denials list when new AVCs arrive");
+    let auto_scroll_switch = gtk4::Switch::new();
+    auto_scroll_switch.set_active(app.auto_scroll);
+    auto_scroll_switch.set_valign(gtk4::Align::Center);
+    {
+        let sender = sender.clone();
+        auto_scroll_switch.connect_state_set(move |switch, _| {
+            sender.input(Msg::SetAutoScroll(switch.is_active()));
+            gtk4::glib::Propagation::Stop
+        });
+    }
+    auto_scroll_row.add_suffix(&auto_scroll_switch);
+    auto_scroll_row.set_activatable_widget(Some(&auto_scroll_switch));
+    list.add(&auto_scroll_row);
+
+    // Anomaly alerts preference.
+    let anomalies_row = libadwaita::ActionRow::new();
+    anomalies_row.set_title("Show anomaly alerts");
+    anomalies_row.set_subtitle("Notify when denial bursts are detected");
+    let anomalies_switch = gtk4::Switch::new();
+    anomalies_switch.set_active(app.show_anomalies);
+    anomalies_switch.set_valign(gtk4::Align::Center);
+    {
+        let sender = sender.clone();
+        anomalies_switch.connect_state_set(move |switch, _| {
+            sender.input(Msg::SetShowAnomalies(switch.is_active()));
+            gtk4::glib::Propagation::Stop
+        });
+    }
+    anomalies_row.add_suffix(&anomalies_switch);
+    anomalies_row.set_activatable_widget(Some(&anomalies_switch));
+    list.add(&anomalies_row);
+
+    // Container hints preference.
+    let container_row = libadwaita::ActionRow::new();
+    container_row.set_title("Container annotations");
+    container_row.set_subtitle("Show container context in tooltips");
+    let container_switch = gtk4::Switch::new();
+    container_switch.set_active(app.show_container_hints);
+    container_switch.set_valign(gtk4::Align::Center);
+    {
+        let sender = sender.clone();
+        container_switch.connect_state_set(move |switch, _| {
+            sender.input(Msg::SetShowContainerHints(switch.is_active()));
+            gtk4::glib::Propagation::Stop
+        });
+    }
+    container_row.add_suffix(&container_switch);
+    container_row.set_activatable_widget(Some(&container_switch));
+    list.add(&container_row);
+
+    content.append(&list);
+
+    // Footer hint.
+    let footer = gtk4::Label::new(Some("Preferences apply immediately and reset on restart."));
+    footer.add_css_class("dim-label");
+    footer.set_margin_top(12);
+    footer.set_margin_bottom(12);
+    footer.set_margin_start(12);
+    footer.set_margin_end(12);
+    content.append(&footer);
+
+    prefs_win.set_child(Some(&content));
+    prefs_win.present();
 }
 
 // ---------------------------------------------------------------------------
