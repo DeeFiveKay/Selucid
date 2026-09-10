@@ -48,15 +48,15 @@ Definition of done (all must hold before publishing):
       Denial reports as Markdown, runnable Bash remediation script, and a
       ready-to-run Ansible playbook (PDF deferred — Markdown satisfies the
       plan and avoids a heavy dependency).
-- [ ] **5. Fix history & rollback** (`src/history.rs`)
+- [!] **5. Fix history & rollback** (`src/history.rs`)
       JSONL audit journal in `$XDG_STATE_HOME/selucid/` recording every
       executed fix with before/after state; single-command rollback that
       inverts the change (boolean flips and reversible relabels only).
-- [ ] **6. CIS / Red Hat hardening checks** (`src/compliance.rs`)
+- [!] **6. CIS / Red Hat hardening checks** (`src/compliance.rs`)
       `selucid audit`: enforcing mode, policy type, permissive domains,
       custom `.pp` modules, customized booleans, pending autorelabel. Each
       check carries a CIS/DISA-style reference.
-- [ ] **7. Security anomaly detection** (`src/anomaly.rs`)
+- [!] **7. Security anomaly detection** (`src/anomaly.rs`)
       Sliding-window denial-rate tracker per source domain; flags
       incident-like bursts (> threshold within the window) as incidents
       instead of routine configuration noise.
@@ -97,3 +97,6 @@ Definition of done (all must hold before publishing):
 | Date | Session | Outcome |
 |---|---|---|
 | 2026-09-10 | Session 1 | Phase 0 done. Baseline: 29/29 tests green, clippy clean. |
+| 2026-09-10 | Session 2 | Features 2-5 committed (container, inspect, report, history+journal hook). Baseline of feature 6 laid. |
+| 2026-09-10 | Session 3 | Feature 5 finalized (49 tests, clippy clean). Feature 6 committed (`selucid audit` core). Live host: Enforcing, semanage store unreadable unprivileged → `Unknown` path exercised. |
+| 2026-09-10 | Session 4 | Feature 6 committed. Feature 7 (`anomaly.rs`, DenialTracker) committed — **Phase 1 complete**, 54/54 tests, clippy clean. Next: Phase 2 CLI. |

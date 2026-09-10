@@ -62,6 +62,12 @@ struct Model {
     booleans: Vec<selucid_core::booleans::BooleanInfo>,
     preview_text: String,
     toast_text: Option<String>,
+    /// Sliding-window anomaly tracker fed by live ingest.
+    tracker: selucid_core::anomaly::DenialTracker,
+    /// Incidents (denial bursts) raised so far.
+    incidents: Vec<selucid_core::anomaly::Incident>,
+    /// Fix journal loaded at startup (read-only view).
+    history: Vec<selucid_core::history::HistoryEntry>,
 }
 
 impl Model {
@@ -80,6 +86,9 @@ impl Model {
             booleans,
             preview_text: String::from("Pick a denial to see the suggested fix."),
             toast_text: None,
+            tracker: selucid_core::anomaly::DenialTracker::default(),
+            incidents: Vec::new(),
+            history: selucid_core::history::list_entries(),
         }
     }
 
@@ -130,6 +139,7 @@ impl Model {
 
     fn ingest(&mut self, incoming: Vec<AvcEvent>) {
         let mut added = 0;
+        let mut fresh: Vec<AvcEvent> = Vec::new();
         for event in incoming {
             if self.events.iter().any(|e| e.audit_id == event.audit_id) {
                 continue;
@@ -151,11 +161,25 @@ impl Model {
                 None,
                 oracle.as_ref(),
             );
-            self.events.push(event);
+            self.events.push(event.clone());
             self.diagnoses.push(d);
+            fresh.push(event);
             added += 1;
         }
-        if added > 0 {
+        // Feed the anomaly tracker; a raised incident outranks the plain
+        // "+N denials" toast as the user-visible signal.
+        for incident in self.tracker.track_batch(&fresh) {
+            self.incidents.push(incident);
+        }
+        if let Some(last) = self.incidents.last() {
+            self.toast_text = Some(format!(
+                "ANOMALY: {} denial(s) from {} on {} ({})",
+                last.count,
+                last.scontext,
+                last.tclass,
+                last.severity.as_str()
+            ));
+        } else if added > 0 {
             self.toast_text = Some(format!("Live: +{added} denial(s)"));
         }
     }
@@ -752,7 +776,24 @@ fn preview_for(model: &Model) -> String {
         return String::from("Pick a denial first.");
     };
     match d.fixes.get(model.selected_fix) {
-        Some(fix) => format!("{}\n$ {}", fix.title, fix.command),
+        Some(fix) => {
+            let mut out = format!("{}\n$ {}", fix.title, fix.command);
+            // Read-only What-If: what would this fix change?
+            let sim = selucid_core::simulate(fix);
+            for c in &sim.changes {
+                out.push_str(&format!("\nWould change: {c}"));
+            }
+            if !sim.domains_gaining.is_empty() {
+                out.push_str(&format!(
+                    "\nDomains gaining access: {}",
+                    sim.domains_gaining.join(", ")
+                ));
+            }
+            for n in &sim.notes {
+                out.push_str(&format!("\nNote: {n}"));
+            }
+            out
+        }
         None => String::from("No such fix for this denial."),
     }
 }
@@ -779,8 +820,12 @@ fn apply_selected(model: &Model) -> Option<String> {
     };
 
     if let Some(a) = action {
-        match a.execute() {
-            Ok(stdout) => Some(format!("Applied:\n{}", a.preview())),
+        match a.execute_journaled() {
+            Ok((_stdout, entry)) => Some(format!(
+                "Applied:\n{}\nRevert with: selucid rollback {}",
+                a.preview(),
+                entry.id
+            )),
             Err(e) => Some(format!("Error: {}", e)),
         }
     } else {
@@ -837,6 +882,9 @@ mod tests {
             booleans: Vec::new(),
             preview_text: String::new(),
             toast_text: None,
+            tracker: selucid_core::anomaly::DenialTracker::default(),
+            incidents: Vec::new(),
+            history: Vec::new(),
         }
     }
 
