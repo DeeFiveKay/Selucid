@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! `selucid` CLI: explain, suggest, watch, booleans.
+//! `selucid` CLI: explain, suggest, watch, booleans, simulate, inspect,
+//! report, history, rollback, and audit.
 
 use clap::{Parser, Subcommand, ValueEnum};
 use selucid_core::{
@@ -48,6 +49,9 @@ enum Commands {
         /// Cross-check each denial against the loaded policy via audit2why.
         #[arg(long)]
         why: bool,
+        /// Flag incident-like denial bursts (sliding-window anomaly detection).
+        #[arg(long)]
+        anomaly: bool,
     },
     /// Show the audit2why verdict for each denial (policy ground truth).
     Why {
@@ -100,6 +104,74 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// Preview what a fix would change without executing it (What-If sandbox).
+    Simulate {
+        /// Log file holding the denial; defaults to stdin, then the audit log.
+        input: Option<PathBuf>,
+        /// 1-based index of the denial in the input (as shown by `explain`).
+        #[arg(long, default_value_t = 1)]
+        index: usize,
+        /// 1-based index of the fix within that denial's suggestion list.
+        #[arg(long, default_value_t = 1)]
+        fix: usize,
+        /// Emit the diff as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Compare actual file labels against the policy defaults in a directory.
+    Inspect {
+        /// Directory tree to scan.
+        path: String,
+        /// Emit the report as JSON.
+        #[arg(long)]
+        json: bool,
+        /// Maximum traversal depth.
+        #[arg(long, default_value_t = 6)]
+        max_depth: u32,
+        /// Maximum number of entries to visit.
+        #[arg(long, default_value_t = 2000)]
+        max_entries: u32,
+    },
+    /// Render a remediation report (Markdown, Bash script, or Ansible playbook).
+    Report {
+        /// Log file to read; defaults to stdin, then /var/log/audit/audit.log.
+        input: Option<PathBuf>,
+        /// Output format.
+        #[arg(long, value_enum, default_value_t = CliReportFormat::Markdown)]
+        format: CliReportFormat,
+        /// Output file (`-` for stdout).
+        #[arg(long, short, default_value = "-")]
+        output: String,
+        /// Cross-check each denial against the loaded policy via audit2why.
+        #[arg(long)]
+        why: bool,
+    },
+    /// List the fix history journal (every fix executed through Selucid).
+    History {
+        /// Emit as JSON.
+        #[arg(long)]
+        json: bool,
+        /// Only show the most recent N entries.
+        #[arg(long)]
+        limit: Option<usize>,
+    },
+    /// Show (or with --execute, run) the command that reverts a journaled fix.
+    Rollback {
+        /// History entry id from `selucid history`.
+        id: String,
+        /// Actually execute the rollback via pkexec (otherwise just preview).
+        #[arg(long)]
+        execute: bool,
+        /// Skip the interactive confirmation prompt.
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Run the CIS/Red Hat style SELinux hardening audit.
+    Audit {
+        /// Emit the report as JSON.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 /// Serialization formats for `selucid export` (blueprint §4: config
@@ -120,6 +192,27 @@ impl std::fmt::Display for ExportFormat {
             ExportFormat::Json => write!(f, "json"),
             ExportFormat::Jsonl => write!(f, "jsonl"),
             ExportFormat::Csv => write!(f, "csv"),
+        }
+    }
+}
+
+/// Output formats for `selucid report`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum CliReportFormat {
+    /// Human/PR-friendly Markdown findings report.
+    Markdown,
+    /// Runnable, confirmation-gated Bash remediation script.
+    Bash,
+    /// Ansible playbook with one task per fix.
+    Ansible,
+}
+
+impl From<CliReportFormat> for selucid_core::ReportFormat {
+    fn from(f: CliReportFormat) -> Self {
+        match f {
+            CliReportFormat::Markdown => selucid_core::ReportFormat::Markdown,
+            CliReportFormat::Bash => selucid_core::ReportFormat::Bash,
+            CliReportFormat::Ansible => selucid_core::ReportFormat::Ansible,
         }
     }
 }
@@ -174,8 +267,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
-        Commands::Watch { interval_ms, why } => {
-            watch_log(interval_ms, why).await?;
+        Commands::Watch { interval_ms, why, anomaly } => {
+            watch_log(interval_ms, why, anomaly).await?;
         }
         Commands::Why { input, json } => {
             run_why(input, json).await?;
@@ -229,13 +322,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     return Ok(());
                 }
             }
-            match action.execute() {
-                Ok(out) => {
+            match action.execute_journaled() {
+                Ok((out, entry)) => {
                     if out.trim().is_empty() {
                         println!("Fix applied.");
                     } else {
                         println!("Fix applied:\n{out}");
                     }
+                    println!(
+                        "Journaled as {} (revert with `selucid rollback {}`).",
+                        entry.id, entry.id
+                    );
                 }
                 Err(e) => {
                     eprintln!("Fix failed: {e}");
@@ -255,6 +352,181 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             } else {
                 for b in list {
                     println!("{:<45} {}", b.name, if b.active { "on" } else { "off" });
+                }
+            }
+        }
+        Commands::Simulate {
+            input,
+            index,
+            fix,
+            json,
+        } => {
+            let events = load_events(input).await;
+            let Some(event) = events.get(index.saturating_sub(1)) else {
+                eprintln!(
+                    "No denial #{index} (input holds {} denial(s)).",
+                    events.len()
+                );
+                std::process::exit(1);
+            };
+            let d = diagnose_event(event, None);
+            let Some(suggestion) = d.fixes.get(fix.saturating_sub(1)) else {
+                eprintln!(
+                    "Denial #{index} has {} fix(es); no fix #{fix}.",
+                    d.fixes.len()
+                );
+                std::process::exit(1);
+            };
+            let sim = selucid_core::sandbox::simulate(suggestion);
+            if json {
+                println!("{}", serde_json::to_string_pretty(&sim)?);
+            } else {
+                println!("What-If: {}", sim.fix_title);
+                println!("  (read-only preview — nothing was changed)");
+                for c in &sim.changes {
+                    println!("  would change: {c}");
+                }
+                if !sim.domains_gaining.is_empty() {
+                    println!("  domains gaining access:");
+                    for dom in &sim.domains_gaining {
+                        println!("    - {dom}");
+                    }
+                }
+                for n in &sim.notes {
+                    println!("  note: {n}");
+                }
+                if !sim.complete {
+                    println!("  (simulation incomplete — see notes)");
+                }
+            }
+        }
+        Commands::Inspect {
+            path,
+            json,
+            max_depth,
+            max_entries,
+        } => {
+            let report = selucid_core::inspect::inspect_directory_with(
+                &path,
+                max_depth,
+                max_entries,
+            );
+            if json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!(
+                    "Inspected {} under {} ({} unreadable)",
+                    report.scanned, report.root, report.unreadable
+                );
+                if report.mismatches.is_empty() {
+                    println!("No label mismatches found.");
+                } else {
+                    for m in &report.mismatches {
+                        println!(
+                            "  {}:{} actual={:?} expected={:?}",
+                            m.path,
+                            m.kind,
+                            m.actual,
+                            m.expected
+                        );
+                    }
+                }
+            }
+        }
+        Commands::Report {
+            input,
+            format,
+            output,
+            why,
+        } => {
+            let events = load_events(input).await;
+            let oracles = maybe_oracles(&events, why);
+            let text = selucid_core::report::render_report(&events, &oracles, format.into());
+            write_output(&output, &text)?;
+        }
+        Commands::History { json, limit } => {
+            let mut entries = selucid_core::history::list_entries();
+            if let Some(n) = limit {
+                let skip = entries.len().saturating_sub(n);
+                entries = entries.split_off(skip);
+            }
+            if json {
+                println!("{}", serde_json::to_string_pretty(&entries)?);
+            } else if entries.is_empty() {
+                println!("No journaled fixes yet (they are recorded by `selucid fix --execute`).");
+            } else {
+                for e in &entries {
+                    println!(
+                        "{}  {}  {}  {}",
+                        e.id,
+                        e.executed_at,
+                        if e.success { "ok  " } else { "FAIL" },
+                        e.argv.join(" ")
+                    );
+                }
+            }
+        }
+        Commands::Rollback { id, execute, yes } => {
+            let entries = selucid_core::history::list_entries();
+            let Some(entry) = entries.iter().find(|e| e.id == id) else {
+                eprintln!("No history entry with id {id:?} (see `selucid history`).");
+                std::process::exit(1);
+            };
+            let Some(plan) = selucid_core::history::rollback_plan(entry) else {
+                eprintln!(
+                    "Entry {id} cannot be rolled back (unknown action or no recorded before-state)."
+                );
+                std::process::exit(1);
+            };
+            let quoted = plan.argv.join(" ");
+            println!("Rollback: {}", plan.description);
+            println!("Command (via pkexec): {quoted}");
+            if !execute {
+                println!("Re-run with `--execute` to apply after review.");
+                return Ok(());
+            }
+            if !yes {
+                println!("Apply this rollback? [y/N]");
+                let mut answer = String::new();
+                std::io::stdin().read_line(&mut answer)?;
+                if answer.trim().to_lowercase() != "y" {
+                    println!("Aborted.");
+                    return Ok(());
+                }
+            }
+            let action = selucid_core::privileged::PrivilegedAction::new(
+                plan.action_id,
+                plan.argv.iter().map(std::ffi::OsString::from).collect(),
+            );
+            match action.execute_journaled() {
+                Ok((out, entry)) => {
+                    if out.trim().is_empty() {
+                        println!("Rollback applied.");
+                    } else {
+                        println!("Rollback applied:\n{out}");
+                    }
+                    println!("Journaled as {}.", entry.id);
+                }
+                Err(e) => {
+                    eprintln!("Rollback failed: {e}");
+                    std::process::exit(1);
+                }
+            }
+        }
+        Commands::Audit { json } => {
+            let report = selucid_core::compliance::run_audit();
+            if json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!("Selucid hardening audit — {}", report.summary());
+                for c in &report.checks {
+                    println!(
+                        "  [{:^7}] {} — {} ({})",
+                        c.status.as_str(),
+                        c.title,
+                        c.detail,
+                        c.reference
+                    );
                 }
             }
         }
@@ -346,12 +618,20 @@ fn fix_to_action(fix: &selucid_core::SuggestedFix) -> selucid_core::privileged::
 }
 
 /// Live log view: inotify-driven when available, polling fallback otherwise.
-async fn watch_log(interval_ms: u64, why: bool) -> Result<(), Box<dyn std::error::Error>> {
+/// With `anomaly`, denial bursts are also flagged as incidents by the
+/// sliding-window tracker.
+async fn watch_log(
+    interval_ms: u64,
+    why: bool,
+    anomaly: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use selucid_core::anomaly::DenialTracker;
     use selucid_core::{LogWatcher, WatchEvent};
     use std::sync::mpsc::channel;
 
     let path = LogTailer::audit_log();
     println!("Watching {} … (Ctrl-C to stop)", path.path().display());
+    let mut tracker = DenialTracker::default();
 
     // Bridge notify's sync callback into the async loop via an mpsc channel.
     let (tx, rx) = channel::<WatchEvent>();
@@ -383,6 +663,9 @@ async fn watch_log(interval_ms: u64, why: bool) -> Result<(), Box<dyn std::error
                         for (i, event) in events.iter().enumerate() {
                             print_explanation(event, oracles.get(i).and_then(|o| o.as_ref()));
                         }
+                        if anomaly {
+                            print_incidents(&mut tracker, &events);
+                        }
                     }
                     WatchEvent::Rotated => println!("(log rotated — continuing)"),
                     WatchEvent::WatchError(e) => eprintln!("watch error: {e}"),
@@ -400,7 +683,29 @@ async fn watch_log(interval_ms: u64, why: bool) -> Result<(), Box<dyn std::error
         for (i, event) in events.iter().enumerate() {
             print_explanation(event, oracles.get(i).and_then(|o| o.as_ref()));
         }
+        if anomaly {
+            print_incidents(&mut tracker, &events);
+        }
         tokio::time::sleep(std::time::Duration::from_millis(interval_ms)).await;
+    }
+}
+
+/// Feed observed denials into the sliding-window tracker and print any
+/// newly raised incidents.
+fn print_incidents(tracker: &mut selucid_core::anomaly::DenialTracker, events: &[AvcEvent]) {
+    for incident in tracker.track_batch(events) {
+        println!(
+            "!!! ANOMALY [{}] {} denials from {} on tclass {} within {}s (limit {}) — \
+             first {:.0}s, last {:.0}s",
+            incident.severity.as_str(),
+            incident.count,
+            incident.scontext,
+            incident.tclass,
+            incident.window_secs,
+            incident.threshold,
+            incident.first_seen,
+            incident.last_seen,
+        );
     }
 }
 

@@ -186,11 +186,9 @@ fn domains_gaining_access(boolean: &str) -> (Vec<String>, bool) {
         if let Some(src) = rest
             .split_whitespace()
             .next()
-            .filter(|src| src.ends_with("_t"))
+            .filter(|src| src.ends_with("_t") && !domains.iter().any(|d: &String| d == src))
         {
-            if !domains.iter().any(|d: &String| d == src) {
-                domains.push(src.to_string());
-            }
+            domains.push(src.to_string());
         }
     }
     domains.sort();
