@@ -76,6 +76,17 @@ selucid-tui /var/log/audit/audit.log
 The GUI (`selucid-gui`) additionally needs `gtk4-devel` and
 `libadwaita-devel`, then: `cargo build -p selucid-gui`.
 
+## GUI features
+
+The GTK4/Libadwaita desktop app provides:
+
+- **Denials tab**: live-updating list of AVC denials with plain-language diagnosis, context details, and suggested fixes.
+- **Booleans tab**: searchable list of SELinux booleans with on/off toggles (applied via Polkit).
+- **Detail pane**: shows the denial summary, explanation, SELinux context (monospace), and radio-selectable fixes with preview/apply buttons.
+- **Live tailing**: inotify-driven audit log monitoring with anomaly burst detection.
+- **Theme toggle**: switch between light and dark themes.
+- **Preferences**: auto-scroll, anomaly alerts, and container annotation toggles.
+
 ## Layout
 
 ```text

@@ -30,14 +30,14 @@
   <updated>2026-09-09</updated>
   <content_rating type="oars-ccc" />
   <releases>
-    <release version="0.1.0" date="2026-09-09">
+    <release version="1.0.0" date="2026-09-10">
       <description>
-        <p>First public pre-release.</p>
+        <p>First stable release.</p>
         <ul>
-          <li>GTK4/Libadwaita desktop app: denials list, detail pane, booleans tab, live tailing.</li>
-          <li>CLI: explain, suggest, watch, why, export, fix, booleans.</li>
-          <li>TUI: full-screen terminal interface with Vim keys.</li>
-          <li>Core: nom parser, grouping, inference, oracle cross-check, privileged pkexec runner.</li>
+          <li>GTK4/Libadwaita desktop app: denials list, detail pane, booleans tab, live tailing, theme toggle, preferences window.</li>
+          <li>CLI: explain, suggest, watch, why, export, fix, booleans, simulate, inspect, report, history, rollback, audit.</li>
+          <li>TUI: full-screen terminal interface with Vim keys, incidents/history tabs.</li>
+          <li>Core: nom parser, grouping, inference, oracle cross-check, privileged pkexec runner, sandbox simulator, anomaly detection, compliance audit.</li>
         </ul>
       </description>
     </release>

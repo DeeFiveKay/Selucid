@@ -37,7 +37,8 @@ privileged execution isolated behind Polkit.
   What-If sandbox view, incident/history tabs, live tailing with anomaly
   status alerts.
 - **`selucid-gui`**: `relm4` + `libadwaita`, excluded from the default
-  workspace build until GTK dev headers are present.
+  workspace build until GTK dev headers are present. Includes theme toggle
+  and preferences window (auto-scroll, anomaly alerts, container hints).
 
 ## Data flow
 

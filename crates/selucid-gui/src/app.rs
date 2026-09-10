@@ -375,7 +375,7 @@ impl SimpleComponent for App {
                         },
                         pack_end = &gtk4::Button {
                             set_icon_name: "weather-clear-night-symbolic",
-                            set_tooltip_text: Some("Toggle dark theme"),
+                            set_tooltip_text: Some("Toggle theme"),
                             connect_clicked[sender] => move |_| {
                                 sender.input(Msg::ToggleTheme);
                             },
@@ -432,8 +432,10 @@ impl SimpleComponent for App {
         let icon_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../icons");
         if icon_path.is_dir() {
-            let theme = gtk4::IconTheme::for_display(&gtk4::gdk::Display::default().unwrap());
-            theme.add_search_path(&icon_path);
+            if let Some(display) = gtk4::gdk::Display::default() {
+                let theme = gtk4::IconTheme::for_display(&display);
+                theme.add_search_path(&icon_path);
+            }
         }
 
         // The ViewSwitcher needs the ViewStack handle; both live in the
