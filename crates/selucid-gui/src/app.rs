@@ -568,18 +568,7 @@ impl SimpleComponent for App {
                     .developer_name("Hugo Hurme")
                     .license_type(gtk4::License::Gpl30)
                     .comments("SELinux AVC troubleshooting toolkit — read-only diagnosis, Polkit-escorted remediation, What-If sandbox.")
-                    .release_notes("<release version=\"1.0.0\" date=\"2026-01-01\">
-  <description>
-    <p>Initial release of Selucid.</p>
-    <ul>
-      <li>Read-only SELinux diagnosis</li>
-      <li>Polkit-escorted remediation</li>
-      <li>What-If sandbox</li>
-      <li>Light/dark theme toggle</li>
-      <li>Preferences window</li>
-    </ul>
-  </description>
-</release>")
+                    .release_notes("<p>Fixed release notes parsing error.</p>")
                     .copyright("© 2026 Hugo Hurme")
                     .modal(true)
                     .build();
