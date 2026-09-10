@@ -4,9 +4,10 @@
 
 use clap::{Parser, Subcommand, ValueEnum};
 use selucid_core::{
-    AvcEvent, extract_avc_events, group_by_serial,
+    AvcEvent, banner, extract_avc_events, group_by_serial,
     reader::{LogTailer, parse_lines},
 };
+use std::io::Write;
 use std::io::{IsTerminal, Read};
 use std::path::PathBuf;
 
@@ -217,8 +218,20 @@ impl From<CliReportFormat> for selucid_core::ReportFormat {
     }
 }
 
+/// Print the ASCII banner when interactive (stdout is a terminal).
+/// Skipped when piped so `selucid explain --json ... | jq` stays clean.
+fn print_banner_if_interactive() {
+    if std::io::stdout().is_terminal() {
+        print!("{}", banner());
+        // Flush so the banner appears immediately even if the command
+        // later blocks on log reads.
+        let _ = std::io::stdout().flush();
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    print_banner_if_interactive();
     let cli = Cli::parse();
     match cli.command {
         Commands::Explain { input, json, why } => {

@@ -2,11 +2,13 @@
 //! Single-window Libadwaita app: Denials + Booleans views over `selucid-core`.
 //!
 //! GNOME HIG patterns for RHEL and Fedora Workstation.
-//! AdwApplicationWindow + AdwHeaderBar, AdwViewSwitcher + GtkStack,
+//! AdwApplicationWindow + AdwHeaderBar, AdwViewSwitcher + AdwViewStack,
 //! boxed-list rows, monospace context block, AdwToastOverlay for live and
 //! apply feedback. Diagnosis and fix previews reuse `selucid-core` exactly
 //! like the CLI and TUI.
 
+use gtk4::prelude::*;
+use libadwaita::prelude::*;
 use relm4::prelude::*;
 use selucid_core::{AvcEvent, Diagnosis, FixKind};
 
@@ -38,10 +40,12 @@ enum Msg {
     PreviewBool(usize),
     /// Boolean switch toggled.
     ToggleBool(usize, bool),
+    /// Open the About dialog.
+    About,
 }
 
 // ---------------------------------------------------------------------------
-// View-model: plain data, no GTK handles.
+// View-model: plain data + widget handles.
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone)]
@@ -51,7 +55,11 @@ struct DenialRow {
     subtitle: String,
 }
 
-struct Model {
+/// The relm4 component *is* the model. Widgets that are built
+/// programmatically (the two boxed lists, the detail labels, the fixes box,
+/// the toast overlay) are held as `Clone`'d GObject handles so `update`
+/// can rebuild the views without access to the generated Widgets struct.
+struct App {
     events: Vec<AvcEvent>,
     diagnoses: Vec<Diagnosis>,
     filter: String,
@@ -60,17 +68,25 @@ struct Model {
     use_oracle: bool,
     bool_filter: String,
     booleans: Vec<selucid_core::booleans::BooleanInfo>,
-    preview_text: String,
-    toast_text: Option<String>,
     /// Sliding-window anomaly tracker fed by live ingest.
     tracker: selucid_core::anomaly::DenialTracker,
     /// Incidents (denial bursts) raised so far.
     incidents: Vec<selucid_core::anomaly::Incident>,
     /// Fix journal loaded at startup (read-only view).
     history: Vec<selucid_core::history::HistoryEntry>,
+
+    // Programmatic widget handles (replaced with the real ones in `init`).
+    window: Option<libadwaita::ApplicationWindow>,
+    toast_overlay: libadwaita::ToastOverlay,
+    denials_list_box: gtk4::ListBox,
+    detail_summary_label: gtk4::Label,
+    detail_explain_label: gtk4::Label,
+    detail_context_label: gtk4::Label,
+    detail_fixes_box: gtk4::Box,
+    booleans_list_box: gtk4::ListBox,
 }
 
-impl Model {
+impl App {
     fn new() -> Self {
         let events = initial_events();
         let diagnoses = diagnose_all(&events, false);
@@ -84,11 +100,18 @@ impl Model {
             use_oracle: false,
             bool_filter: String::new(),
             booleans,
-            preview_text: String::from("Pick a denial to see the suggested fix."),
-            toast_text: None,
             tracker: selucid_core::anomaly::DenialTracker::default(),
             incidents: Vec::new(),
             history: selucid_core::history::list_entries(),
+            // Placeholders; `init` swaps in the real handles.
+            window: None,
+            toast_overlay: libadwaita::ToastOverlay::new(),
+            denials_list_box: gtk4::ListBox::new(),
+            detail_summary_label: gtk4::Label::new(None),
+            detail_explain_label: gtk4::Label::new(None),
+            detail_context_label: gtk4::Label::new(None),
+            detail_fixes_box: gtk4::Box::new(gtk4::Orientation::Vertical, 8),
+            booleans_list_box: gtk4::ListBox::new(),
         }
     }
 
@@ -134,10 +157,11 @@ impl Model {
     fn rediagnose(&mut self) {
         self.diagnoses = diagnose_all(&self.events, self.use_oracle);
         self.selected_fix = 0;
-        self.preview_text = String::from("Pick a denial to see the suggested fix.");
     }
 
-    fn ingest(&mut self, incoming: Vec<AvcEvent>) {
+    /// Merge fresh events, then return the notice to show (anomaly alert
+    /// outranking the plain "+N denials" toast), if any.
+    fn ingest(&mut self, incoming: Vec<AvcEvent>) -> Option<String> {
         let mut added = 0;
         let mut fresh: Vec<AvcEvent> = Vec::new();
         for event in incoming {
@@ -172,15 +196,17 @@ impl Model {
             self.incidents.push(incident);
         }
         if let Some(last) = self.incidents.last() {
-            self.toast_text = Some(format!(
+            Some(format!(
                 "ANOMALY: {} denial(s) from {} on {} ({})",
                 last.count,
                 last.scontext,
                 last.tclass,
                 last.severity.as_str()
-            ));
+            ))
         } else if added > 0 {
-            self.toast_text = Some(format!("Live: +{added} denial(s)"));
+            Some(format!("Live: +{added} denial(s)"))
+        } else {
+            None
         }
     }
 }
@@ -189,14 +215,25 @@ impl Model {
 // Data helpers
 // ---------------------------------------------------------------------------
 
+fn load_events_from_file(path: &str) -> Vec<AvcEvent> {
+    use selucid_core::reader::parse_lines;
+    use selucid_core::{extract_avc_events, group_by_serial};
+
+    match std::fs::read_to_string(path) {
+        Ok(text) => {
+            let lines: Vec<String> = text.lines().map(|l| l.to_string()).collect();
+            extract_avc_events(&group_by_serial(parse_lines(&lines)))
+        }
+        Err(_) => Vec::new(),
+    }
+}
+
 fn initial_events() -> Vec<AvcEvent> {
     use selucid_core::reader::{LogTailer, parse_lines};
     use selucid_core::{extract_avc_events, group_by_serial};
 
     if let Some(path) = std::env::args().nth(1) {
-        let text = std::fs::read_to_string(&path).unwrap_or_default();
-        let lines: Vec<String> = text.lines().map(|l| l.to_string()).collect();
-        return extract_avc_events(&group_by_serial(parse_lines(&lines)));
+        return load_events_from_file(&path);
     }
     let tailer = LogTailer::audit_log();
     tokio::runtime::Builder::new_current_thread()
@@ -247,10 +284,6 @@ pub fn run(path: &str) {
 // Component
 // ---------------------------------------------------------------------------
 
-struct App {
-    model: Model,
-}
-
 #[relm4::component]
 impl SimpleComponent for App {
     type Init = String;
@@ -265,6 +298,7 @@ impl SimpleComponent for App {
             set_default_height: 720,
             set_icon_name: Some("selucid"),
 
+            #[name(toast_overlay)]
             libadwaita::ToastOverlay {
                 #[wrap(Some)]
                 set_child = &gtk4::Box {
@@ -273,7 +307,6 @@ impl SimpleComponent for App {
                     libadwaita::HeaderBar {
                         pack_start = &gtk4::Box {
                             set_spacing: 6,
-                            set_hexpand: false,
                             gtk4::Image {
                                 set_icon_name: Some("security-medium-symbolic"),
                             },
@@ -283,7 +316,6 @@ impl SimpleComponent for App {
                             },
                         },
                         pack_start: view_switcher = &libadwaita::ViewSwitcher {
-                            set_stack: Some(stack),
                             set_policy: libadwaita::ViewSwitcherPolicy::Wide,
                         },
                         pack_end: filter_entry = &gtk4::SearchEntry {
@@ -292,18 +324,19 @@ impl SimpleComponent for App {
                                 sender.input(Msg::SetFilter(entry.text().to_string()));
                             },
                         },
+                        pack_end = &gtk4::MenuButton {
+                            set_icon_name: "open-menu-symbolic",
+                            set_menu_model: Some(&{
+                                let menu = gtk4::gio::Menu::new();
+                                menu.append(Some("About Selucid"), Some("app.about"));
+                                menu
+                            }),
+                        },
                     },
 
                     #[name(stack)]
-                    gtk4::Stack {
+                    libadwaita::ViewStack {
                         set_vexpand: true,
-                        connect_visible_child_notify[sender] => move |stack| {
-                            if let Some(name) = stack.visible_child_name() {
-                                if name == "denials" {
-                                    sender.input(Msg::SetFilter(model.filter.clone()));
-                                }
-                            }
-                        },
                     },
                 },
             }
@@ -312,34 +345,30 @@ impl SimpleComponent for App {
 
     fn init(
         init: Self::Init,
-        _root: Self::Root,
+        root: Self::Root,
         sender: ComponentSender<Self>,
     ) -> ComponentParts<Self> {
-        let mut model = Model::new();
+        let mut model = App::new();
         if !init.is_empty() {
-            match std::fs::read_to_string(&init) {
-                Ok(text) => {
-                    for raw_line in text.lines() {
-                        if let Ok(event) = selucid_core::parser::parse_audit_line(raw_line) {
-                            if event.result.as_str() == "denied" {
-                                model.events.push(event);
-                            }
-                        }
-                    }
-                    model.diagnoses = diagnose_all(&model.events, model.use_oracle);
-                }
-                Err(_) => {
-                    let _ = sender;
-                }
+            let events = load_events_from_file(&init);
+            if !events.is_empty() {
+                model.events.extend(events);
+                model.rediagnose();
             }
         }
 
         let widgets = view_output!();
 
-        // Build page contents.
-        build_denials_page(&widgets, &model, sender.clone());
-        build_booleans_page(&widgets, &model, sender.clone());
-        widgets.stack.set_visible_child_name(Some("denials"));
+        // The ViewSwitcher needs the ViewStack handle; both live in the
+        // generated Widgets struct (names from `view!` above).
+        widgets.view_switcher.set_stack(Some(&widgets.stack));
+
+        // Build page contents into the stack and remember their handles.
+        model.window = Some(widgets.window.clone());
+        model.toast_overlay = widgets.toast_overlay.clone();
+        build_denials_page(&widgets, &mut model, sender.clone());
+        build_booleans_page(&widgets, &mut model, sender.clone());
+        widgets.stack.set_visible_child_name("denials");
 
         ComponentParts { model, widgets }
     }
@@ -347,93 +376,110 @@ impl SimpleComponent for App {
     fn update(&mut self, msg: Self::Input, sender: ComponentSender<Self>) {
         match msg {
             Msg::SetFilter(q) => {
-                self.model.filter = q;
-                self.model.selected = None;
-                rebuild_denials_list(&self.widgets, &self.model, sender.clone());
-                clear_detail(&self.widgets);
+                self.filter = q;
+                self.selected = None;
+                rebuild_denials_list(self);
+                clear_detail(self);
             }
             Msg::SelectDenial(selected) => {
-                self.model.selected = selected;
-                self.model.selected_fix = 0;
-                rebuild_denials_list(&self.widgets, &self.model, sender.clone());
-                if let Some(_idx) = selected {
-                    show_detail(&self.widgets, &self.model);
+                self.selected = selected;
+                self.selected_fix = 0;
+                rebuild_denials_list(self);
+                if selected.is_some() {
+                    show_detail(self, &sender);
                 } else {
-                    clear_detail(&self.widgets);
+                    clear_detail(self);
                 }
             }
             Msg::SelectFix(i) => {
-                self.model.selected_fix = i;
-                update_fix_preview(&self.widgets, &self.model);
+                self.selected_fix = i;
+                refresh_fix_radios(self, &sender);
             }
             Msg::SetOracle(on) => {
-                self.model.use_oracle = on;
-                self.model.rediagnose();
-                rebuild_denials_list(&self.widgets, &self.model, sender.clone());
-                if self.model.selected.is_some() {
-                    show_detail(&self.widgets, &self.model);
+                self.use_oracle = on;
+                self.rediagnose();
+                rebuild_denials_list(self);
+                if self.selected.is_some() {
+                    show_detail(self, &sender);
                 }
             }
             Msg::Ingest(incoming) => {
-                self.model.ingest(incoming);
-                rebuild_denials_list(&self.widgets, &self.model, sender.clone());
-                if let Some(idx) = self.model.selected {
-                    if idx < self.model.events.len() {
-                        show_detail(&self.widgets, &self.model);
+                if let Some(notice) = self.ingest(incoming) {
+                    sender.input(Msg::Notice(notice));
+                }
+                rebuild_denials_list(self);
+                if let Some(idx) = self.selected {
+                    if idx < self.events.len() {
+                        show_detail(self, &sender);
                     } else {
-                        self.model.selected = None;
-                        clear_detail(&self.widgets);
+                        self.selected = None;
+                        clear_detail(self);
                     }
                 }
             }
             Msg::Notice(text) => {
-                self.model.toast_text = Some(text);
-                show_toast(&self.widgets, &text);
+                toast(self, &text);
             }
             Msg::PreviewFix => {
-                self.model.preview_text = preview_for(&self.model);
-                update_fix_preview(&self.widgets, &self.model);
+                toast(self, &preview_for(self));
             }
             Msg::ApplyFix => {
-                if let Some(text) = apply_selected(&self.model) {
-                    sender.input(Msg::Notice(text));
+                if let Some(text) = apply_selected(self) {
+                    toast(self, &text);
                 }
             }
             Msg::SetBoolFilter(q) => {
-                self.model.bool_filter = q;
-                rebuild_booleans_list(&self.widgets, &self.model);
+                self.bool_filter = q;
+                rebuild_booleans_list(self, &sender);
             }
             Msg::PreviewBool(pos) => {
-                if let Some(idx) = self.model.visible_booleans().get(pos).copied() {
-                    let b = &self.model.booleans[idx];
-                    self.model.toast_text = Some(format!(
-                        "preview: sudo {}",
-                        selucid_core::booleans::setsebool_command(&b.name, !b.active)
-                    ));
+                if let Some(idx) = self.visible_booleans().get(pos).copied() {
+                    let b = &self.booleans[idx];
+                    toast(
+                        self,
+                        &format!(
+                            "preview: sudo {}",
+                            selucid_core::booleans::setsebool_command(&b.name, !b.active)
+                        ),
+                    );
                 }
             }
             Msg::ToggleBool(idx, on) => {
-                if let Some(i) = self.model.visible_booleans().get(idx).copied() {
-                    let b = &self.model.booleans[i];
-                    sender.input(Msg::Notice(format!(
-                        "preview: {}",
-                        selucid_core::booleans::setsebool_command(&b.name, on)
-                    )));
+                if let Some(i) = self.visible_booleans().get(idx).copied() {
+                    let b = &self.booleans[i];
                     let action = selucid_core::privileged::setsebool_action(&b.name, on);
                     match action.execute() {
                         Ok(_stdout) => {
-                            if let Some(bi) = self.model.booleans.get_mut(i) {
+                            if let Some(bi) = self.booleans.get_mut(i) {
                                 bi.active = on;
                                 bi.pending = on;
                             }
-                            rebuild_booleans_list(&self.widgets, &self.model);
-                            sender.input(Msg::Notice(format!("Applied: {}", action.preview())));
+                            rebuild_booleans_list(self, &sender);
+                            toast(self, &format!("Applied: {}", action.preview()));
                         }
                         Err(e) => {
-                            sender.input(Msg::Notice(format!("Error: {}", e)));
+                            toast(self, &format!("Error: {e}"));
                         }
                     }
                 }
+            }
+            Msg::About => {
+                let about = libadwaita::AboutWindow::new();
+                about.set_application_name("Selucid");
+                about.set_version(env!("CARGO_PKG_VERSION"));
+                about.set_developer_name("Hugo Hurme");
+                about.set_license_type(gtk4::License::Gpl30);
+                about.set_website("https://github.com/banaani/selucid");
+                about.set_comments("SELinux AVC troubleshooting toolkit — read-only diagnosis, Polkit-escorted remediation, What-If sandbox.");
+                about.set_copyright("© 2026 Hugo Hurme");
+                // ASCII logo as a monospace release-notes header.
+                let logo_text = format!("{}\n\nSelucid bridges the gap between cryptic AVC denials and the humans who must fix them.", selucid_core::LOGO.trim_end());
+                about.set_release_notes(&logo_text);
+                if let Some(window) = &self.window {
+                    about.set_transient_for(Some(window));
+                }
+                about.set_modal(true);
+                about.present();
             }
         }
     }
@@ -445,11 +491,9 @@ impl SimpleComponent for App {
 
 fn build_denials_page(
     widgets: &<App as SimpleComponent>::Widgets,
-    model: &Model,
+    model: &mut App,
     sender: ComponentSender<App>,
 ) {
-    use gtk4::prelude::*;
-
     let page = gtk4::Box::new(gtk4::Orientation::Horizontal, 12);
     page.set_hexpand(true);
     page.set_vexpand(true);
@@ -461,23 +505,22 @@ fn build_denials_page(
     list_box.set_hexpand(false);
     list_box.set_vexpand(true);
     list_box.set_selection_mode(gtk4::SelectionMode::Single);
-
-    let list_box_weak = list_box.downgrade();
-    list_box.connect_row_selected(move |box_| {
-        if let Some(row) = box_.selected_row() {
-            // Find the index from the row's title.
-            let label = row.child().and_then(|c| c.downcast_ref::<gtk4::Label>());
-            if let Some(label) = label {
-                let summary = label.label().unwrap_or_default();
-                // Lookup by summary in the model... we need sender.
-                // Store index as row data instead.
-                let idx = row.data::<usize>().unwrap_or(&0);
-                // Send message via a global channel.
-                let _ = box_;
-                let _ = idx;
+    // Rows are tagged with their model index via the widget name.
+    {
+        let sender = sender.clone();
+        list_box.connect_row_selected(move |box_, _row| {
+            if let Some(row) = box_.selected_row() {
+                let name = row.widget_name();
+                if let Ok(idx) = name.parse::<usize>() {
+                    sender.input(Msg::SelectDenial(Some(idx)));
+                }
             }
-        }
-    });
+        });
+    }
+    let list_scroll = gtk4::ScrolledWindow::new();
+    list_scroll.set_hexpand(false);
+    list_scroll.set_vexpand(true);
+    list_scroll.set_child(Some(&list_box));
 
     // Right column: detail pane.
     let detail_box = gtk4::Box::new(gtk4::Orientation::Vertical, 12);
@@ -488,7 +531,6 @@ fn build_denials_page(
     let detail_scroll = gtk4::ScrolledWindow::new();
     detail_scroll.set_hexpand(true);
     detail_scroll.set_vexpand(true);
-    detail_scroll.set_margin_all(0);
 
     let detail_inner = gtk4::Box::new(gtk4::Orientation::Vertical, 12);
     detail_inner.set_hexpand(true);
@@ -497,14 +539,12 @@ fn build_denials_page(
     let summary_label = gtk4::Label::new(Some("Select a denial to inspect"));
     summary_label.set_halign(gtk4::Align::Start);
     summary_label.set_wrap(true);
-    summary_label.set_line_wrap(true);
     summary_label.add_css_class("headline");
     detail_inner.append(&summary_label);
 
     let explain_label = gtk4::Label::new(Some(""));
     explain_label.set_halign(gtk4::Align::Start);
     explain_label.set_wrap(true);
-    explain_label.set_line_wrap(true);
     explain_label.add_css_class("dim-label");
     detail_inner.append(&explain_label);
 
@@ -521,26 +561,23 @@ fn build_denials_page(
     detail_scroll.set_child(Some(&detail_inner));
     detail_box.append(&detail_scroll);
 
-    page.append(&list_box);
+    page.append(&list_scroll);
     page.append(&detail_box);
 
     widgets.stack.add_titled(&page, Some("denials"), "Denials");
 
-    widgets.denials_list_box = Some(list_box);
-    widgets.detail_summary_label = Some(summary_label);
-    widgets.detail_explain_label = Some(explain_label);
-    widgets.detail_context_label = Some(context_label);
-    widgets.detail_fixes_box = Some(fixes_box);
+    model.denials_list_box = list_box;
+    model.detail_summary_label = summary_label;
+    model.detail_explain_label = explain_label;
+    model.detail_context_label = context_label;
+    model.detail_fixes_box = fixes_box;
 }
 
 fn build_booleans_page(
-    widgets: &mut <App as SimpleComponent>::Widgets,
-    _model: &Model,
+    widgets: &<App as SimpleComponent>::Widgets,
+    model: &mut App,
     sender: ComponentSender<App>,
 ) {
-    use gtk4::prelude::*;
-    use libadwaita::prelude::*;
-
     let page = gtk4::Box::new(gtk4::Orientation::Vertical, 12);
     page.set_hexpand(true);
     page.set_vexpand(true);
@@ -549,9 +586,12 @@ fn build_booleans_page(
     let search_entry = gtk4::SearchEntry::new();
     search_entry.set_placeholder_text(Some("Search booleans\u{2026}"));
     search_entry.set_hexpand(true);
-    search_entry.connect_search_changed(move |entry| {
-        sender.input(Msg::SetBoolFilter(entry.text().to_string()));
-    });
+    {
+        let sender = sender.clone();
+        search_entry.connect_search_changed(move |entry| {
+            sender.input(Msg::SetBoolFilter(entry.text().to_string()));
+        });
+    }
     page.append(&search_entry);
 
     let list_box = gtk4::ListBox::new();
@@ -559,40 +599,38 @@ fn build_booleans_page(
     list_box.set_hexpand(true);
     list_box.set_vexpand(true);
     list_box.set_selection_mode(gtk4::SelectionMode::None);
-    page.append(&list_box);
+    let list_scroll = gtk4::ScrolledWindow::new();
+    list_scroll.set_hexpand(true);
+    list_scroll.set_vexpand(true);
+    list_scroll.set_child(Some(&list_box));
+    page.append(&list_scroll);
 
     widgets.stack.add_titled(&page, Some("booleans"), "Booleans");
 
-    widgets.booleans_list_box = Some(list_box);
-    widgets.bool_search_entry = Some(search_entry);
+    model.booleans_list_box = list_box;
 }
 
 // ---------------------------------------------------------------------------
 // Rebuild helpers
 // ---------------------------------------------------------------------------
 
-fn rebuild_denials_list(
-    widgets: &<App as SimpleComponent>::Widgets,
-    model: &Model,
-    sender: ComponentSender<App>,
-) {
-    use gtk4::prelude::*;
+fn rebuild_denials_list(model: &mut App) {
+    let list_box = model.denials_list_box.clone();
 
-    let list_box = widgets.denials_list_box.as_ref().unwrap();
-
-    // Remove existing rows.
-    list_box.rows().for_each(|row| list_box.remove(&row));
+    // Remove existing rows (row_at_index(0) is the head of the list).
+    while let Some(row) = list_box.row_at_index(0) {
+        list_box.remove(&row);
+    }
 
     let visible = model.visible_rows();
-    for row_data in visible {
+    for row_data in &visible {
         let row = gtk4::ListBoxRow::new();
         row.set_selectable(true);
-        row.set_data(&row_data.index);
+        row.set_widget_name(&row_data.index.to_string());
 
         let label = gtk4::Label::new(Some(&row_data.summary));
         label.set_halign(gtk4::Align::Start);
         label.set_wrap(true);
-        label.set_line_wrap(true);
         label.set_margin_end(12);
         label.add_css_class("title");
 
@@ -604,18 +642,10 @@ fn rebuild_denials_list(
 
         let row_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
         row_box.set_hexpand(true);
-        row_box.set_halign(gtk4::Align::Start);
         row_box.append(&label);
         row_box.append(&subtitle);
 
         row.set_child(Some(&row_box));
-
-        let sender_clone = sender.clone();
-        let idx = row_data.index;
-        row.connect_activated(move |_| {
-            sender_clone.input(Msg::SelectDenial(Some(idx)));
-        });
-
         list_box.append(&row);
     }
 
@@ -628,36 +658,37 @@ fn rebuild_denials_list(
     }
 }
 
-fn rebuild_booleans_list(
-    widgets: &<App as SimpleComponent>::Widgets,
-    model: &Model,
-) {
-    use gtk4::prelude::*;
-    use libadwaita::prelude::*;
+fn rebuild_booleans_list(model: &mut App, sender: &ComponentSender<App>) {
+    let list_box = model.booleans_list_box.clone();
 
-    let list_box = widgets.booleans_list_box.as_ref().unwrap();
-
-    list_box.rows().for_each(|row| list_box.remove(&row));
+    while let Some(row) = list_box.row_at_index(0) {
+        list_box.remove(&row);
+    }
 
     let visible = model.visible_booleans();
-    for idx in visible {
-        let info = &model.booleans[idx];
+    for pos in &visible {
+        let info = &model.booleans[*pos];
         let row = libadwaita::ActionRow::new();
         row.set_title(&info.name);
         row.set_subtitle(if info.active { "on" } else { "off" });
-        row.add_css_class("boxed-list");
 
         let switch = gtk4::Switch::new();
         switch.set_active(info.active);
         switch.set_hexpand(false);
         switch.set_halign(gtk4::Align::End);
+        switch.set_valign(gtk4::Align::Center);
 
-        let idx2 = idx;
-        switch.connect_state_set(move |_switch, active| {
-            // We need sender here. We'll store it on the widget.
-            glib::Propagation::Stop
-        });
-
+        // Keep the switch honest with reality: applying via pkexec may
+        // fail, so the toggle sends the intent (state is authoritative in
+        // the model) and the default handler is blocked.
+        {
+            let sender = sender.clone();
+            let pos_val = *pos;
+            switch.connect_state_set(move |_switch, state| {
+                sender.input(Msg::ToggleBool(pos_val, state));
+                gtk4::glib::Propagation::Stop
+            });
+        }
         row.add_suffix(&switch);
         list_box.append(&row);
     }
@@ -671,54 +702,69 @@ fn rebuild_booleans_list(
     }
 }
 
-fn show_detail(
-    widgets: &<App as SimpleComponent>::Widgets,
-    model: &Model,
-) {
-    use gtk4::prelude::*;
+fn clear_detail(model: &App) {
+    model.detail_summary_label.set_label("Select a denial to inspect");
+    model.detail_explain_label.set_label("");
+    model.detail_context_label.set_label("");
 
+    let fixes_box = &model.detail_fixes_box;
+    while let Some(c) = fixes_box.first_child() {
+        fixes_box.remove(&c);
+    }
+}
+
+fn show_detail(model: &App, sender: &ComponentSender<App>) {
     let Some(selected) = model.selected else {
-        widgets.detail_summary_label.as_ref().unwrap().set_label("Select a denial to inspect");
-        widgets.detail_explain_label.as_ref().unwrap().set_label("");
-        widgets.detail_context_label.as_ref().unwrap().set_label("");
-        widgets.detail_fixes_box.as_ref().unwrap().children().for_each(|c| {
-            widgets.detail_fixes_box.as_ref().unwrap().remove(&c);
-        });
+        clear_detail(model);
         return;
     };
 
-    let event = &model.events[selected];
-    let diagnosis = &model.diagnoses[selected];
+    let (Some(event), Some(diagnosis)) = (
+        model.events.get(selected),
+        model.diagnoses.get(selected),
+    ) else {
+        clear_detail(model);
+        return;
+    };
 
-    widgets.detail_summary_label.as_ref().unwrap().set_label(&diagnosis.summary);
-    widgets.detail_explain_label.as_ref().unwrap().set_label(&diagnosis.explanation);
+    model.detail_summary_label.set_label(&diagnosis.summary);
+    model.detail_explain_label.set_label(&diagnosis.explanation);
 
     let scontext = event.scontext.split(':').next().unwrap_or("?");
     let tcontext = event.tcontext.split(':').next().unwrap_or("?");
-    widgets.detail_context_label.as_ref().unwrap().set_markup(&format!(
-        "<span font_family=\"monospace\" size=\"x-small\"><b>{}</b>\u{2192}<b>{}</b></span>",
+    model.detail_context_label.set_markup(&format!(
+        "<span font_style=\"italic\" size=\"small\"><b>{}</b> \u{2192} <b>{}</b></span>",
         scontext, tcontext
     ));
 
-    let fixes_box = widgets.detail_fixes_box.as_ref().unwrap();
-    fixes_box.children().for_each(|c| fixes_box.remove(&c));
+    let fixes_box = &model.detail_fixes_box;
+    while let Some(c) = fixes_box.first_child() {
+        fixes_box.remove(&c);
+    }
 
     for (fix_idx, fix) in diagnosis.fixes.iter().enumerate() {
         let fix_row = libadwaita::ActionRow::new();
         fix_row.set_title(&fix.title);
         fix_row.set_subtitle(&fix.description);
-        fix_row.add_css_class("boxed-list");
 
         let radio = gtk4::CheckButton::new();
         radio.set_active(fix_idx == model.selected_fix);
         radio.set_halign(gtk4::Align::Start);
+        radio.set_valign(gtk4::Align::Center);
+        {
+            let sender = sender.clone();
+            radio.connect_toggled(move |btn| {
+                if btn.is_active() {
+                    sender.input(Msg::SelectFix(fix_idx));
+                }
+            });
+        }
         fix_row.add_prefix(&radio);
 
         let command_label = gtk4::Label::new(Some(&fix.command));
         command_label.set_halign(gtk4::Align::Start);
         command_label.add_css_class("monospace");
-        command_label.set_wrap(true);
-        command_label.set_margin_start(12);
+        command_label.set_ellipsize(gtk4::pango::EllipsizeMode::End);
         command_label.set_selectable(true);
 
         let box_ = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
@@ -728,11 +774,19 @@ fn show_detail(
         let preview_btn = gtk4::Button::with_label("Preview");
         preview_btn.set_hexpand(false);
         preview_btn.add_css_class("flat");
+        {
+            let sender = sender.clone();
+            preview_btn.connect_clicked(move |_| sender.input(Msg::PreviewFix));
+        }
         box_.append(&preview_btn);
 
         let apply_btn = gtk4::Button::with_label("Apply");
         apply_btn.set_hexpand(false);
         apply_btn.add_css_class("suggested-action");
+        {
+            let sender = sender.clone();
+            apply_btn.connect_clicked(move |_| sender.input(Msg::ApplyFix));
+        }
         box_.append(&apply_btn);
 
         fix_row.add_suffix(&box_);
@@ -740,35 +794,21 @@ fn show_detail(
     }
 }
 
-fn clear_detail(widgets: &<App as SimpleComponent>::Widgets) {
-    use gtk4::prelude::*;
-
-    widgets.detail_summary_label.as_ref().unwrap().set_label("Select a denial to inspect");
-    widgets.detail_explain_label.as_ref().unwrap().set_label("");
-    widgets.detail_context_label.as_ref().unwrap().set_label("");
-
-    let fixes_box = widgets.detail_fixes_box.as_ref().unwrap();
-    fixes_box.children().for_each(|c| fixes_box.remove(&c));
+/// Re-render the detail pane after a fix selection (radios reflect state).
+fn refresh_fix_radios(model: &App, sender: &ComponentSender<App>) {
+    show_detail(model, sender);
 }
 
-fn update_fix_preview(widgets: &<App as SimpleComponent>::Widgets, model: &Model) {
-    if !model.preview_text.is_empty() {
-        show_toast(widgets, &model.preview_text);
-    }
-}
-
-fn show_toast(widgets: &<App as SimpleComponent>::Widgets, text: &str) {
-    use libadwaita::prelude::*;
-    widgets.toast_overlay.add_toast(
-        libadwaita::Toast::with_label(text)
-    );
+/// Show a transient toast on the overlay (live ingest, previews, results).
+fn toast(model: &App, text: &str) {
+    model.toast_overlay.add_toast(libadwaita::Toast::new(text));
 }
 
 // ---------------------------------------------------------------------------
 // Preview / Apply
 // ---------------------------------------------------------------------------
 
-fn preview_for(model: &Model) -> String {
+fn preview_for(model: &App) -> String {
     let Some(i) = model.selected else {
         return String::from("Pick a denial first.");
     };
@@ -798,10 +838,10 @@ fn preview_for(model: &Model) -> String {
     }
 }
 
-fn apply_selected(model: &Model) -> Option<String> {
-    let Some(i) = model.selected else { return None };
-    let Some(d) = model.diagnoses.get(i) else { return None };
-    let Some(fix) = d.fixes.get(model.selected_fix) else { return None };
+fn apply_selected(model: &App) -> Option<String> {
+    let i = model.selected?;
+    let d = model.diagnoses.get(i)?;
+    let fix = d.fixes.get(model.selected_fix)?;
 
     let action = match &fix.kind {
         FixKind::Restorecon => {
@@ -819,20 +859,19 @@ fn apply_selected(model: &Model) -> Option<String> {
         FixKind::SemanageFcontext | FixKind::PolicyModule | FixKind::ContainerVolume => None,
     };
 
-    if let Some(a) = action {
-        match a.execute_journaled() {
+    match action {
+        Some(a) => match a.execute_journaled() {
             Ok((_stdout, entry)) => Some(format!(
                 "Applied:\n{}\nRevert with: selucid rollback {}",
                 a.preview(),
                 entry.id
             )),
-            Err(e) => Some(format!("Error: {}", e)),
-        }
-    } else {
-        Some(format!(
+            Err(e) => Some(format!("Error: {e}")),
+        },
+        None => Some(format!(
             "Refused: {} needs eyes-on review. Copy the command below and run it manually.",
             fix.title
-        ))
+        )),
     }
 }
 
@@ -865,27 +904,16 @@ mod tests {
         }
     }
 
-    fn model() -> Model {
+    fn model() -> App {
         let events = vec![
             event(1, "httpd", "system_u:system_r:httpd_t:s0", "unconfined_u:object_r:user_home_t:s0"),
             event(2, "smbd", "system_u:system_r:smbd_t:s0", "system_u:object_r:default_t:s0"),
         ];
         let diagnoses = diagnose_all(&events, false);
-        Model {
-            events,
-            diagnoses,
-            filter: String::new(),
-            selected: None,
-            selected_fix: 0,
-            use_oracle: false,
-            bool_filter: String::new(),
-            booleans: Vec::new(),
-            preview_text: String::new(),
-            toast_text: None,
-            tracker: selucid_core::anomaly::DenialTracker::default(),
-            incidents: Vec::new(),
-            history: Vec::new(),
-        }
+        let mut m = App::new();
+        m.events = events;
+        m.diagnoses = diagnoses;
+        m
     }
 
     #[test]
@@ -905,6 +933,16 @@ mod tests {
         m.ingest(vec![event(1, "httpd", "system_u:system_r:httpd_t:s0", "system_u:object_r:var_t:s0")]);
         assert_eq!(m.events.len(), 3);
         assert_eq!(m.diagnoses.len(), 3);
+    }
+
+    #[test]
+    fn ingest_reports_notice_and_anomaly_on_burst() {
+        let mut m = model();
+        assert!(m
+            .ingest(vec![event(3, "httpd", "system_u:system_r:httpd_t:s0", "system_u:object_r:var_t:s0")])
+            .unwrap()
+            .starts_with("Live: +1"));
+        assert!(m.ingest(Vec::new()).is_none());
     }
 
     #[test]

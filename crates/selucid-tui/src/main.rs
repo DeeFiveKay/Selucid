@@ -15,7 +15,7 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
 };
 use selucid_core::reader::{LogTailer, parse_lines};
-use selucid_core::{AvcEvent, Diagnosis, extract_avc_events, group_by_serial};
+use selucid_core::{trimmed, AvcEvent, Diagnosis, extract_avc_events, group_by_serial};
 use std::io::{self, IsTerminal, Read};
 use std::time::Duration;
 
@@ -404,7 +404,7 @@ fn render(f: &mut ratatui::Frame, app: &mut App) {
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .title("selucid-tui (Tab switches)"),
+                .title(format!("Selucid · SELinux + Lucid  ·  {}", trimmed(1))),
         )
         .select(app.tab)
         .highlight_style(
@@ -454,7 +454,11 @@ fn render_denials(f: &mut ratatui::Frame, app: &mut App, area: ratatui::layout::
 
     let detail = match app.selected() {
         Some(i) => detail_text(&app.events[i], &app.diagnoses[i], app.show_fix),
-        None => "No denials. Usage:\n  selucid-tui /var/log/audit/audit.log".to_string(),
+        None => {
+            // Empty state: show the ASCII logo splash + usage hint.
+            let splash = trimmed(6);
+            format!("{splash}\n\nNo denials loaded.\nUsage: selucid-tui /var/log/audit/audit.log")
+        }
     };
     // When a What-If diff is loaded (via `t`), show it under the fix list.
     let detail = match &app.sandbox {

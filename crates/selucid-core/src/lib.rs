@@ -18,6 +18,7 @@ pub mod inference;
 pub mod parser;
 pub mod privileged;
 pub mod reader;
+pub mod logo;
 pub mod report;
 pub mod sandbox;
 
@@ -37,5 +38,6 @@ pub use inference::{
 };
 pub use parser::{ParseError, parse_audit_line};
 pub use reader::{LogWatcher, WatchEvent};
+pub use logo::{LOGO, banner, trimmed};
 pub use report::{ReportFormat, render_ansible, render_bash, render_markdown, render_report};
 pub use sandbox::{SimulationDiff, simulate};
