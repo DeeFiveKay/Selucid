@@ -37,7 +37,7 @@
 
 ---
 
-### **What SHOULD NOT be added to Selucid? (To be honest)**
+### **What SHOULD NOT be added to Selucid?**
 
 * **No custom SELinux policy compiler from scratch**
 * **Why:** Writing custom `.te` (Type Enforcement) modules from the ground up is extremely complex. Rely on the system's native `audit2allow` tool under the hood instead of building a custom compiler.

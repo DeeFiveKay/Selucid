@@ -10,7 +10,7 @@
 use gtk4::prelude::*;
 use libadwaita::prelude::*;
 use relm4::prelude::*;
-use selucid_core::{AvcEvent, Diagnosis, FixKind};
+use selucid_core::{AvcEvent, Diagnosis, FixKind, LogWatcher, WatchEvent};
 
 // ---------------------------------------------------------------------------
 // Messages
@@ -73,6 +73,8 @@ struct App {
     /// Incidents (denial bursts) raised so far.
     incidents: Vec<selucid_core::anomaly::Incident>,
     /// Fix journal loaded at startup (read-only view).
+    /// Cached at startup; can be displayed in a History view later.
+    #[allow(dead_code)]
     history: Vec<selucid_core::history::HistoryEntry>,
 
     // Programmatic widget handles (replaced with the real ones in `init`).
@@ -318,19 +320,33 @@ impl SimpleComponent for App {
                         pack_start: view_switcher = &libadwaita::ViewSwitcher {
                             set_policy: libadwaita::ViewSwitcherPolicy::Wide,
                         },
+                        pack_end = &gtk4::Box {
+                            set_spacing: 6,
+                            gtk4::Switch {
+                                set_tooltip_text: Some("Cross-check against loaded policy (audit2why)"),
+                                set_active: false,
+                                connect_state_set[sender] => move |switch, _state| {
+                                    sender.input(Msg::SetOracle(switch.is_active()));
+                                    gtk4::glib::Propagation::Stop
+                                },
+                            },
+                            gtk4::Label {
+                                set_label: "audit2why",
+                                add_css_class: "dim-label",
+                            },
+                        },
                         pack_end: filter_entry = &gtk4::SearchEntry {
                             set_placeholder_text: Some("Filter denials\u{2026}"),
                             connect_search_changed[sender] => move |entry| {
                                 sender.input(Msg::SetFilter(entry.text().to_string()));
                             },
                         },
-                        pack_end = &gtk4::MenuButton {
-                            set_icon_name: "open-menu-symbolic",
-                            set_menu_model: Some(&{
-                                let menu = gtk4::gio::Menu::new();
-                                menu.append(Some("About Selucid"), Some("app.about"));
-                                menu
-                            }),
+                        pack_end = &gtk4::Button {
+                            set_icon_name: "help-about-symbolic",
+                            set_tooltip_text: Some("About Selucid"),
+                            connect_activate[sender] => move |_| {
+                                sender.input(Msg::About);
+                            },
                         },
                     },
 
@@ -369,6 +385,24 @@ impl SimpleComponent for App {
         build_denials_page(&widgets, &mut model, sender.clone());
         build_booleans_page(&widgets, &mut model, sender.clone());
         widgets.stack.set_visible_child_name("denials");
+
+        // Live watcher bridge: notify pushes new denials, we forward them
+        // to the component as Msg::Ingest so they land in the Denials tab
+        // and feed the anomaly tracker.
+        if !init.is_empty() {
+            let tx = sender.clone();
+            let _watch = LogWatcher::watch(&init, move |ev| match ev {
+                WatchEvent::Denials(events) => {
+                    let _ = tx.input(Msg::Ingest(events));
+                }
+                WatchEvent::Rotated => {
+                    let _ = tx.input(Msg::Notice("live: log rotated — continuing".into()));
+                }
+                WatchEvent::WatchError(e) => {
+                    let _ = tx.input(Msg::Notice(format!("live watch error: {e}")));
+                }
+            });
+        }
 
         ComponentParts { model, widgets }
     }
@@ -463,22 +497,24 @@ impl SimpleComponent for App {
                     }
                 }
             }
+            #[allow(deprecated)]
             Msg::About => {
-                let about = libadwaita::AboutWindow::new();
-                about.set_application_name("Selucid");
-                about.set_version(env!("CARGO_PKG_VERSION"));
-                about.set_developer_name("Hugo Hurme");
-                about.set_license_type(gtk4::License::Gpl30);
-                about.set_website("https://github.com/banaani/selucid");
-                about.set_comments("SELinux AVC troubleshooting toolkit — read-only diagnosis, Polkit-escorted remediation, What-If sandbox.");
-                about.set_copyright("© 2026 Hugo Hurme");
-                // ASCII logo as a monospace release-notes header.
+                // ASCII logo as a release-notes header.
                 let logo_text = format!("{}\n\nSelucid bridges the gap between cryptic AVC denials and the humans who must fix them.", selucid_core::LOGO.trim_end());
-                about.set_release_notes(&logo_text);
+                let about = libadwaita::AboutWindow::builder()
+                    .application_name("Selucid")
+                    .version(env!("CARGO_PKG_VERSION"))
+                    .developer_name("Hugo Hurme")
+                    .license_type(gtk4::License::Gpl30)
+                    .website("https://github.com/banaani/selucid")
+                    .comments("SELinux AVC troubleshooting toolkit — read-only diagnosis, Polkit-escorted remediation, What-If sandbox.")
+                    .copyright("© 2026 Hugo Hurme")
+                    .release_notes(&logo_text)
+                    .modal(true)
+                    .build();
                 if let Some(window) = &self.window {
                     about.set_transient_for(Some(window));
                 }
-                about.set_modal(true);
                 about.present();
             }
         }
@@ -688,6 +724,19 @@ fn rebuild_booleans_list(model: &mut App, sender: &ComponentSender<App>) {
                 sender.input(Msg::ToggleBool(pos_val, state));
                 gtk4::glib::Propagation::Stop
             });
+        }
+        // Preview button: shows the setsebool command without executing it.
+        {
+            let sender = sender.clone();
+            let pos_val = *pos;
+            let preview_btn = gtk4::Button::new();
+            preview_btn.set_icon_name("dialog-information-symbolic");
+            preview_btn.set_tooltip_text(Some("Preview toggle command"));
+            preview_btn.add_css_class("flat");
+            preview_btn.connect_clicked(move |_| {
+                sender.input(Msg::PreviewBool(pos_val));
+            });
+            row.add_suffix(&preview_btn);
         }
         row.add_suffix(&switch);
         list_box.append(&row);
