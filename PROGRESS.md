@@ -32,53 +32,62 @@ Definition of done (all must hold before publishing):
 
 ### Phase 1 — Core engine (`selucid-core`)
 
-- [ ] **1. Sandbox & What-If simulator** (`src/sandbox.rs`)
+- [x] **1. Sandbox & What-If simulator** (`src/sandbox.rs`)
       Read-only diff before a `setsebool`/`semanage`/`restorecon` execution:
       before/after state, affected domains via `sesearch -b <bool> -A`
       (graceful fallback when `sesearch` is missing).
-- [!] **2. Container integration (Podman & Flatpak)** (`src/container.rs`)
+- [x] **2. Container integration (Podman & Flatpak)** (`src/container.rs`)
       Classify `container_t`/`flatpak_*` denials; detect the missing `:z`/`:Z`
       volume-mount flag and suggest the corrected Podman invocation.
       Wired into `diagnose_with_oracle` (new `FixKind::ContainerVolume`);
       CLI/GUI treat it as review-only guidance.
-- [!] **3. Proactive context inspection** (`src/inspect.rs`)
+- [x] **3. Proactive context inspection** (`src/inspect.rs`)
       Directory walker; per-file `matchpathcon` expected vs actual label
       (`getfattr`), producing a mismatch report (unlabeled / wrong label).
-- [!] **4. Exporting & reporting** (`src/report.rs`)
+- [x] **4. Exporting & reporting** (`src/report.rs`)
       Denial reports as Markdown, runnable Bash remediation script, and a
       ready-to-run Ansible playbook (PDF deferred — Markdown satisfies the
       plan and avoids a heavy dependency).
-- [!] **5. Fix history & rollback** (`src/history.rs`)
+- [x] **5. Fix history & rollback** (`src/history.rs`)
       JSONL audit journal in `$XDG_STATE_HOME/selucid/` recording every
       executed fix with before/after state; single-command rollback that
       inverts the change (boolean flips and reversible relabels only).
-- [!] **6. CIS / Red Hat hardening checks** (`src/compliance.rs`)
+- [x] **6. CIS / Red Hat hardening checks** (`src/compliance.rs`)
       `selucid audit`: enforcing mode, policy type, permissive domains,
       custom `.pp` modules, customized booleans, pending autorelabel. Each
       check carries a CIS/DISA-style reference.
-- [!] **7. Security anomaly detection** (`src/anomaly.rs`)
+- [x] **7. Security anomaly detection** (`src/anomaly.rs`)
       Sliding-window denial-rate tracker per source domain; flags
       incident-like bursts (> threshold within the window) as incidents
       instead of routine configuration noise.
 
 ### Phase 2 — CLI (`selucid-cli`)
 
-- [ ] Subcommands `simulate`, `inspect`, `report`, `history`, `rollback`,
+- [x] Subcommands `simulate`, `inspect`, `report`, `history`, `rollback`,
       `audit`; `watch --anomaly`; container-aware fixes in `explain`/`suggest`.
-- [ ] Journaling wired into `selucid fix --execute` (via `execute_journaled`).
+      Live-verified: `audit`, `inspect /tmp` (599 paths), `simulate`,
+      `report --format markdown|bash`, `history`, `--help`.
+- [x] Journaling wired into `selucid fix --execute` (via `execute_journaled`).
 
 ### Phase 3 — Frontends
 
-- [ ] **TUI**: incident banner, sandbox diff in the fix-preview pane,
-      history listing.
-- [ ] **GUI** (`app.rs`): sandbox confirm dialog before execute, incident
-      badge; verify builds with `cargo build -p selucid-gui --features gui`
-      on a host with `gtk4-devel` + `libadwaita-devel`.
+- [x] **TUI**: 4 tabs (Denials/Booleans/Incidents/History); `[c]` container
+      markers, live anomaly incident banner + tracker status, What-If sandbox
+      preview on `t` (Denials tab), journal listing (History tab).
+- [x] **GUI** (`app.rs`): anomaly incidents surface in the live toast,
+      What-If simulation appended to fix preview, execution journaled with
+      rollback id shown. Syntax-checked with rustfmt — this host lacks
+      `gtk4-devel`/`libadwaita-devel`, so a full
+      `cargo build -p selucid-gui --features gui` remains to be run on a
+      GUI-capable host before publishing.
 
 ### Phase 4 — Pre-publish polish
 
-- [ ] Full test + clippy pass; README quick-start updated; architecture doc
-      updated; version bump decision; one commit per feature.
+- [x] Full test + clippy pass (66/66 workspace tests excluding GUI; clippy clean).
+- [x] README quick-start updated (all new subcommands, journal/rollback notes).
+- [x] `docs/ARCHITECTURE.md` updated (new core modules, data flow, privilege notes).
+- [ ] Version bump decision (`0.1.0` → `0.2.0` recommended) + tag before publish.
+- [ ] GUI-capable host: `cargo build -p selucid-gui` (needs gtk4/libadwaita devel).
 
 ---
 
@@ -100,3 +109,5 @@ Definition of done (all must hold before publishing):
 | 2026-09-10 | Session 2 | Features 2-5 committed (container, inspect, report, history+journal hook). Baseline of feature 6 laid. |
 | 2026-09-10 | Session 3 | Feature 5 finalized (49 tests, clippy clean). Feature 6 committed (`selucid audit` core). Live host: Enforcing, semanage store unreadable unprivileged → `Unknown` path exercised. |
 | 2026-09-10 | Session 4 | Feature 6 committed. Feature 7 (`anomaly.rs`, DenialTracker) committed — **Phase 1 complete**, 54/54 tests, clippy clean. Next: Phase 2 CLI. |
+| 2026-09-10 | Session 5 | Feature 1 (`sandbox.rs`) committed — 58/58 tests. Phase 2 CLI + Phase 3 TUI/GUI committed; all new subcommands live-verified on the host (Enforcing, targeted). GUI needs a gtk4-capable host for a full build check. Next: Phase 4 polish. |
+| 2026-09-10 | Session 6 | **All 7 features done.** Phase 4: README + ARCHITECTURE updated; 66/66 workspace tests, clippy clean; CLI smoke test re-run (`audit` 4 pass/3 unknown, `report`, `history`, `simulate`, `inspect /tmp`). Remaining pre-publish: version bump + GUI build on capable host. |

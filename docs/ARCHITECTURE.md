@@ -23,10 +23,19 @@ privileged execution isolated behind Polkit.
   `grouping` (merge `AVC+SYSCALL+PATH` records by `msg=audit(serial)`),
   `inference` (human explanation + `SuggestedFix` list), `booleans`
   (`/sys/fs/selinux/booleans` with `getsebool` fallback), `privileged`
-  (`pkexec` argv builder, dry-run preview), `reader` (tokio file tailer).
+  (`pkexec` argv builder, dry-run preview), `reader` (tokio file tailer),
+  `container` (container-sourced denial classification + volume-flag fixes),
+  `inspect` (directory label scan vs `matchpathcon` defaults), `report`
+  (Markdown / Bash / Ansible remediation renderers), `history` (fix journal
+  with before/after state + rollback plans), `compliance` (CIS-style
+  hardening audit), `anomaly` (sliding-window denial-burst incidents),
+  `sandbox` (read-only What-If diffs for proposed fixes).
 - **`selucid-cli`**: thin `clap` wrapper. `explain`, `suggest`, `watch`,
-  `booleans`. JSON output for scripting.
-- **`selucid-tui`**: `ratatui` + `crossterm`, Vim keys, filter, fix preview.
+  `why`, `export`, `fix`, `booleans`, `simulate`, `inspect`, `report`,
+  `history`, `rollback`, `audit`. JSON output for scripting.
+- **`selucid-tui`**: `ratatui` + `crossterm`, Vim keys, filter, fix preview,
+  What-If sandbox view, incident/history tabs, live tailing with anomaly
+  status alerts.
 - **`selucid-gui`**: `relm4` + `libadwaita`, excluded from the default
   workspace build until GTK dev headers are present.
 
@@ -39,9 +48,17 @@ privileged execution isolated behind Polkit.
 3. `inference::diagnose` matches the denial vector against boolean hints and
    `matchpathcon` expected contexts, emitting fixes ordered by confidence:
    `restorecon` → `semanage fcontext` → `setsebool -P` → `audit2allow` module.
-4. Frontends render the diagnosis; `privileged::PrivilegedAction::preview`
-   shows the exact command; `execute` re-runs it under `pkexec` only after the
-   user confirms.
+   Container-sourced denials (container_t subjects, `container_file_t` targets)
+   additionally get a `podman run -v src:dst:z` guidance fix that is never
+   executed automatically.
+4. Frontends render the diagnosis; `sandbox::simulate` can preview any fix
+   read-only (boolean before/after via sysfs, `sesearch -b` domain impact,
+   label diff via xattr vs `matchpathcon`).
+5. `privileged::PrivilegedAction::preview` shows the exact command;
+   `execute_journaled` re-runs it under `pkexec` only after the user confirms,
+   capturing the before-state (boolean value or file context) and the
+   after-state into `history::record` (`$XDG_STATE_HOME/selucid/history.jsonl`).
+   `rollback_plan` inverts any journaled action.
 
 ## Security notes
 
@@ -50,5 +67,6 @@ privileged execution isolated behind Polkit.
 - Boolean/file reads prefer sysfs (`/sys/fs/selinux`) so diagnosis works
   without privileges; only remediation escalates.
 - Direct `argv` execution (no shell) throughout `privileged` to avoid injection.
-- `notify`-based live reload is Phase 2; the MVP tails with `tokio` polling,
-  which also covers truncation/rotation.
+- `notify`-based live reload with a `tokio` polling fallback; both cover
+  truncation/rotation, and the watcher feeds the anomaly tracker so denial
+  bursts raise visible incidents instead of scrolling past silently.

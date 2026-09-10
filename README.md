@@ -45,8 +45,31 @@ selucid export audit.log --format jsonl -o denials.jsonl
 # Inspect SELinux booleans
 selucid booleans --search httpd
 
-# Full-screen terminal UI: Denials + Booleans tabs, live tailing
-# (Vim keys: j/k navigate, Tab switch tab, / filter, t preview toggle, q quit)
+# Sandbox What-If: preview what a fix would change, without executing it
+selucid simulate audit.log --index 1 --fix 1
+
+# Compare actual file labels against the policy defaults in a directory tree
+selucid inspect /var/www --max-depth 4
+
+# Render a remediation report (Markdown, runnable Bash script, Ansible playbook)
+selucid report audit.log --format markdown
+selucid report audit.log --format bash -o remediate.sh
+selucid report audit.log --format ansible -o remediate.yml
+
+# Fix history journal (every fix applied through Selucid) and rollback
+selucid history
+selucid rollback 01J9Q4...            # preview the reverting command
+selucid rollback 01J9Q4... --execute  # apply it via pkexec
+
+# CIS/Red Hat style SELinux hardening audit
+selucid audit
+
+# Flag incident-like denial bursts while watching
+selucid watch --anomaly
+
+# Full-screen terminal UI: Denials + Booleans + Incidents + History tabs,
+# live tailing (Vim keys: j/k navigate, Tab switch tab, / filter,
+# t What-If sandbox / boolean preview, q quit)
 selucid-tui /var/log/audit/audit.log
 ```
 
@@ -56,8 +79,11 @@ The GUI (`selucid-gui`) additionally needs `gtk4-devel` and
 ## Layout
 
 ```text
-crates/selucid-core  # parser, grouping, inference, booleans, privileged runner
-crates/selucid-cli   # `selucid` command (explain/suggest/watch/booleans)
+crates/selucid-core  # parser, grouping, inference, booleans, privileged runner,
+                     # container hints, context inspection, reports, history,
+                     # compliance audit, anomaly detection, What-If sandbox
+crates/selucid-cli   # `selucid` command (explain/suggest/watch/why/export/
+                     # fix/booleans/simulate/inspect/report/history/rollback/audit)
 crates/selucid-tui   # `selucid-tui` full-screen terminal interface
 crates/selucid-gui   # `selucid-gui` GTK4/Libadwaita desktop app (optional)
 policy/              # Polkit action definitions (org.selucid.*)
@@ -69,6 +95,9 @@ docs/ARCHITECTURE.md # component design, privilege model
 `selucid`, `selucid-tui` and `selucid-gui` run **unprivileged**. Reading
 protected logs and applying fixes escalates only through `pkexec`/Polkit with a
 native authentication prompt, and every privileged command is previewed first.
+Every fix applied through Selucid is journaled (with before/after state) in
+`$XDG_STATE_HOME/selucid/history.jsonl`, so `selucid rollback` can invert it
+later — journaling itself never escalates.
 
 ## License
 
